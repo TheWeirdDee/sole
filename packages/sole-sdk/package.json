@@ -1,0 +1,10 @@
+{
+  "name": "@sole/sdk",
+  "version": "0.1.0",
+  "description": "Sole - privacy-preserving exclusivity for economic rights on STRK20",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "peerDependencies": { "starknet": "^10.4.0" },
+  "scripts": { "test": "node --test" }
+}

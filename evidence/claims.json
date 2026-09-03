@@ -1,0 +1,11 @@
+{
+  "description": "Each claim Sole makes, and the artifact that proves it. Regenerate with scripts/verify-mainnet.ts --all.",
+  "claims": [
+    { "id": "C-1", "claim": "one active claimant per right", "evidence": "tests/adversarial: full_lifecycle + second_claim_on_active_right_reverts" },
+    { "id": "C-2", "claim": "duplicate claim refused on-chain", "evidence": "mainnet TX4 reverts RIGHT_ALREADY_ACTIVE (verify-mainnet.ts)" },
+    { "id": "C-3", "claim": "claimant/amount/counterparty never public", "evidence": "docs/PRIVACY_BOUNDARY.md table + no identity in registry events" },
+    { "id": "C-4", "claim": "settlement consumes the right, once", "evidence": "replayed_settlement_reverts + mainnet TX5" },
+    { "id": "C-5", "claim": "claiming wallet unlinked from the right", "evidence": "direct_registry_call_reverts + anonymizer route in TX3" }
+  ],
+  "transactions": []
+}
