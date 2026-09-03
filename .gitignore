@@ -24,6 +24,11 @@ dist/
 # cairo / scarb
 contracts/target/
 
+# agent skills (local dev tooling, reinstall with `npx skills add welttowelt/strk20-skills`)
+.agents/
+.claude/
+skills-lock.json
+
 # misc
 .DS_Store
 *.pem
