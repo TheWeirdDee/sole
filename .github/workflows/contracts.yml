@@ -1,0 +1,30 @@
+name: contracts
+
+on:
+  push:
+    paths:
+      - "contracts/**"
+      - "tests/**"
+      - ".github/workflows/contracts.yml"
+  pull_request:
+    paths:
+      - "contracts/**"
+      - "tests/**"
+      - ".github/workflows/contracts.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: software-mansion/setup-scarb@v1
+        with:
+          scarb-version: "2.20.1"
+          scarb-lock: contracts/Scarb.lock
+      - uses: foundry-rs/setup-snfoundry@v4
+        with:
+          starknet-foundry-version: "0.63.0"
+      - run: scarb build
+        working-directory: contracts
+      - run: snforge test
+        working-directory: contracts
