@@ -5,5 +5,22 @@
   "adapter_venue_1": "0x0788f8439042f8750ec90638bc764dd36f766930770238c630df70e667e6cf28",
   "adapter_venue_2": "0x01dbf93d533f9b1d4aff959cfd10cd53136663db81f101d74db8008825b6d27c",
   "pool": "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a",
-  "network": "starknet-mainnet"
+  "network": "starknet-mainnet",
+  "deployment_transactions": {
+    "note": "Declare/deploy/wiring transactions. None of these touch the STRK20 pool, so none count toward the sprint's pool-touching transaction minimum - see strk20.json for those once they exist. Listed here for deployment provenance only.",
+    "declare_registry": "0xa40ac9a06454dabcc81fdfaa1e597aded63edb1aa7b5a0458486e80fe0e79a",
+    "deploy_registry": "0x763436c61958a0d2e036bc7f8793751e6714f9fd6218217989c7773679b4e9f",
+    "declare_anonymizer": "0x16dd494509a6969b21d4645ee359f1ff456a43db923aa72973e80efcadea1fc",
+    "deploy_anonymizer": "0x393e94e42018e9d4264a1defde4331afe4c363ae3e3a6f56604df69a1af1b8b",
+    "initialize_anonymizer": "0x42fdde2fdd81619d9d32fbe7f7106c0326afd510763f92de3ec94e3d7d0e039",
+    "declare_root": "0x389e1a67ff280fb90d3a1d70bb5eaa329d829995b87bc7a207b0a0baa7c91f0",
+    "deploy_root": "0x3344ea56d7b54895df496e3d9b634d37175f6de13d667c100ebb7afbf944b8e",
+    "declare_adapter": "0x4c7f490057b0aac9ff3d724e7cdf68448b23b09a6c2ff480edaaf9b64a7b252",
+    "deploy_adapter_venue_1": "0x4a6b90c9b4fc3ee5dd8dec4dfbb775b5b0da80c8a3f4e7e3c4729b18864eefb",
+    "deploy_adapter_venue_2": "0x54ddaed06d99b2c8f1adb30bc9792d79ceaf71356bc32cd14d590a869348e7c"
+  },
+  "sdk_probe": {
+    "note": "First real SoleClient -> mainnet call, proving the integration end to end. register() carries no value and is not routed through privacy_invoke, so this also does not count toward the pool-touching minimum - see scripts/probe-mainnet.ts.",
+    "register": "0x7797bdeed0c7a852f0ed025e3f3dafa2fd77417b00937081b443eb00b9ad7b7"
+  }
 }
