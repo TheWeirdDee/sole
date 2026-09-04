@@ -19,7 +19,7 @@
 import { RpcProvider, hash } from "starknet";
 import { readFileSync } from "node:fs";
 
-const RPC = process.env.STARKNET_RPC ?? "https://starknet-mainnet.public.blastapi.io/rpc/v0_7";
+const RPC = process.env.STARKNET_RPC ?? "https://rpc.starknet.lava.build";
 const provider = new RpcProvider({ nodeUrl: RPC });
 
 type Deployment = { registry: string; anonymizer: string; pool: string };
