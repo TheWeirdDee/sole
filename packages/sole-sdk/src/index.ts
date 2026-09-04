@@ -1,3 +1,3 @@
 // SPDX-License-Identifier: Apache-2.0
-export * from "./derive";
-export * from "./client";
+export * from "./derive.ts";
+export * from "./client.ts";
