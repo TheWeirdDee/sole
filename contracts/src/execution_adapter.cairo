@@ -72,7 +72,8 @@ pub mod ExecTags {
 // ---------------------------------------------------------------------------
 #[starknet::contract]
 pub mod FallbackMarket {
-    use super::{IExecutionAdapter, ExecAuth};
+    use super::{IExecutionAdapter, ExecAuth, ExecTags};
+    use core::poseidon::poseidon_hash_span;
     use starknet::{ContractAddress, get_caller_address};
     use starknet::storage::{
         Map, StoragePointerReadAccess, StoragePointerWriteAccess,
@@ -86,7 +87,7 @@ pub mod FallbackMarket {
     struct Storage {
         registry: ContractAddress,
         anonymizer: ContractAddress,
-        used_auth: Map<felt252, bool>, // nonce -> consumed
+        financed: Map<felt252, bool>, // slot_key -> already financed once
         position: Map<felt252, felt252>, // slot_key -> opaque position/amount commitment
     }
 
@@ -101,7 +102,8 @@ pub mod FallbackMarket {
     pub mod Errors {
         pub const NOT_ANONYMIZER: felt252 = 'CALLER_NOT_ANONYMIZER';
         pub const RIGHT_NOT_ACTIVE: felt252 = 'AUTH_RIGHT_NOT_ACTIVE';
-        pub const AUTH_CONSUMED: felt252 = 'AUTH_ALREADY_CONSUMED';
+        pub const INVALID_AUTH: felt252 = 'AUTH_NONCE_MISMATCH';
+        pub const ALREADY_FINANCED: felt252 = 'RIGHT_ALREADY_FINANCED';
     }
 
     #[constructor]
@@ -115,11 +117,23 @@ pub mod FallbackMarket {
         // The whole point: the venue call is gated by Sole. If the right is not
         // ACTIVE (never claimed, or a duplicate that reverted, or consumed),
         // there is no authorization and financing cannot execute.
-        fn gate(self: @ContractState, auth: ExecAuth) {
+        //
+        // auth.nonce is NOT trusted as caller-supplied: it is recomputed here
+        // from the registry's own on-chain commitment for this slot and must
+        // match exactly. Without this, a nonce is just an arbitrary felt the
+        // caller picks - nothing would stop calling finance() repeatedly on
+        // the same ACTIVE right with a fresh made-up nonce each time, since
+        // "already used" was tracked per-nonce, not per-right.
+        fn gate(self: @ContractState, auth: ExecAuth) -> IRightsRegistryDispatcher {
             assert(get_caller_address() == self.anonymizer.read(), Errors::NOT_ANONYMIZER);
             let reg = IRightsRegistryDispatcher { contract_address: self.registry.read() };
             assert(reg.state_of(auth.slot_key) == RightState::Active, Errors::RIGHT_NOT_ACTIVE);
-            assert(!self.used_auth.read(auth.nonce), Errors::AUTH_CONSUMED);
+            let commitment = reg.commitment_of(auth.slot_key);
+            let expected_nonce = poseidon_hash_span(
+                [ExecTags::TAG_EXEC, auth.slot_key, commitment].span(),
+            );
+            assert(auth.nonce == expected_nonce, Errors::INVALID_AUTH);
+            reg
         }
     }
 
@@ -127,6 +141,11 @@ pub mod FallbackMarket {
     impl AdapterImpl of IExecutionAdapter<ContractState> {
         fn finance(ref self: ContractState, auth: ExecAuth, shielded_amount_commitment: felt252) -> felt252 {
             self.gate(auth);
+            // One financing per right while it stays ACTIVE - keyed by
+            // slot_key, not by the auth nonce, so a fresh nonce can't be used
+            // to finance the same right a second time.
+            assert(!self.financed.read(auth.slot_key), Errors::ALREADY_FINANCED);
+            self.financed.write(auth.slot_key, true);
             // real shielded value settles here via the STRK20 private-transfer
             // path (wired in the SDK/privacy_invoke leg); we record the opaque
             // position commitment. The amount never becomes public.
@@ -136,7 +155,6 @@ pub mod FallbackMarket {
         }
         fn settle(ref self: ContractState, auth: ExecAuth) -> felt252 {
             self.gate(auth);
-            self.used_auth.write(auth.nonce, true); // auth is now spent
             let pos = self.position.read(auth.slot_key);
             self.position.write(auth.slot_key, 0);
             self.emit(Event::Repaid(Repaid { slot_key: auth.slot_key }));
@@ -157,9 +175,13 @@ pub mod FallbackMarket {
 // ---------------------------------------------------------------------------
 #[starknet::contract]
 pub mod VesuAdapter {
-    use super::{IExecutionAdapter, ExecAuth};
+    use super::{IExecutionAdapter, ExecAuth, ExecTags};
+    use core::poseidon::poseidon_hash_span;
     use starknet::{ContractAddress, get_caller_address};
-    use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
+    use starknet::storage::{
+        Map, StoragePointerReadAccess, StoragePointerWriteAccess,
+        StorageMapReadAccess, StorageMapWriteAccess,
+    };
     use sole_contracts::rights_registry::{
         IRightsRegistryDispatcher, IRightsRegistryDispatcherTrait, RightState,
     };
@@ -169,11 +191,14 @@ pub mod VesuAdapter {
         registry: ContractAddress,
         anonymizer: ContractAddress,
         vesu: ContractAddress, // Vesu market entrypoint
+        financed: Map<felt252, bool>, // slot_key -> already financed once
     }
 
     pub mod Errors {
         pub const NOT_ANONYMIZER: felt252 = 'CALLER_NOT_ANONYMIZER';
         pub const RIGHT_NOT_ACTIVE: felt252 = 'AUTH_RIGHT_NOT_ACTIVE';
+        pub const INVALID_AUTH: felt252 = 'AUTH_NONCE_MISMATCH';
+        pub const ALREADY_FINANCED: felt252 = 'RIGHT_ALREADY_FINANCED';
     }
 
     #[constructor]
@@ -187,10 +212,18 @@ pub mod VesuAdapter {
 
     #[generate_trait]
     impl Internal of InternalTrait {
-        fn gate(self: @ContractState, auth: ExecAuth) {
+        // Same gate as FallbackMarket - see its comment for why the nonce is
+        // recomputed rather than trusted from calldata.
+        fn gate(self: @ContractState, auth: ExecAuth) -> IRightsRegistryDispatcher {
             assert(get_caller_address() == self.anonymizer.read(), Errors::NOT_ANONYMIZER);
             let reg = IRightsRegistryDispatcher { contract_address: self.registry.read() };
             assert(reg.state_of(auth.slot_key) == RightState::Active, Errors::RIGHT_NOT_ACTIVE);
+            let commitment = reg.commitment_of(auth.slot_key);
+            let expected_nonce = poseidon_hash_span(
+                [ExecTags::TAG_EXEC, auth.slot_key, commitment].span(),
+            );
+            assert(auth.nonce == expected_nonce, Errors::INVALID_AUTH);
+            reg
         }
     }
 
@@ -198,6 +231,8 @@ pub mod VesuAdapter {
     impl AdapterImpl of IExecutionAdapter<ContractState> {
         fn finance(ref self: ContractState, auth: ExecAuth, shielded_amount_commitment: felt252) -> felt252 {
             self.gate(auth);
+            assert(!self.financed.read(auth.slot_key), Errors::ALREADY_FINANCED);
+            self.financed.write(auth.slot_key, true);
             // TODO(integration): call Vesu deposit/borrow against the shielded
             // position, using the STRK20 private-transfer output as the funding
             // leg. Returns Vesu's position id. Gate above guarantees Sole
