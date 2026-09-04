@@ -2,19 +2,21 @@
 //
 // Sole - venue gating tests
 // Proves the causal claim: the money market executes ONLY when Sole says the
-// right is ACTIVE. Bank B's duplicate claim reverts at Sole, so no auth exists
-// and finance() can never run for B.
+// right is ACTIVE, AND only with an auth nonce that genuinely matches the
+// on-chain claim commitment for that slot - not merely any unused felt.
 //
 //   A claims -> ACTIVE -> finance() succeeds -> settle repays + consumes
 //   B claims same right -> REVERT at Sole -> B never obtains ACTIVE -> finance() reverts
 //   after CONSUMED -> finance() reverts
+//   a tampered nonce, or financing the same ACTIVE right twice -> both refused
 
 use snforge_std::{declare, ContractClassTrait, DeclareResultTrait, start_cheat_caller_address,
     stop_cheat_caller_address};
 use starknet::ContractAddress;
+use core::poseidon::poseidon_hash_span;
 use sole_contracts::rights_registry::{IRightsRegistryDispatcher, IRightsRegistryDispatcherTrait};
 use sole_contracts::execution_adapter::{
-    IExecutionAdapterDispatcher, IExecutionAdapterDispatcherTrait, ExecAuth,
+    IExecutionAdapterDispatcher, IExecutionAdapterDispatcherTrait, ExecAuth, ExecTags,
 };
 
 fn ANON() -> ContractAddress { 'anonymizer'.try_into().unwrap() }
@@ -32,10 +34,17 @@ fn deploy() -> (IRightsRegistryDispatcher, IExecutionAdapterDispatcher) {
     (reg, IExecutionAdapterDispatcher { contract_address: mkt_addr })
 }
 
+// The only valid nonce for (slot_key, commitment) - mirrors the adapter's own
+// gate() and the SDK's deriveExecNonce. A test that used an arbitrary felt
+// here would no longer prove anything: the adapter now recomputes and checks
+// this exact value rather than trusting the caller's auth.
+fn real_auth(slot_key: felt252, commitment: felt252) -> ExecAuth {
+    ExecAuth { slot_key, nonce: poseidon_hash_span([ExecTags::TAG_EXEC, slot_key, commitment].span()) }
+}
+
 const SLOT: felt252 = 0x5107;
 const COMMIT_A: felt252 = 0xC1A;
 const NULL_A: felt252 = 0x0A;
-const NONCE_A: felt252 = 0xE0;
 const AMT: felt252 = 0xA33;
 
 #[test]
@@ -48,7 +57,7 @@ fn venue_executes_only_when_authorized() {
 
     // financing runs against the venue, gated by Sole's ACTIVE state
     start_cheat_caller_address(mkt.contract_address, ANON());
-    let auth = ExecAuth { slot_key: SLOT, nonce: NONCE_A };
+    let auth = real_auth(SLOT, COMMIT_A);
     let pos = mkt.finance(auth, AMT);
     assert(pos == AMT, 'financed against venue');
     stop_cheat_caller_address(mkt.contract_address);
@@ -63,8 +72,47 @@ fn venue_never_executes_without_active_right() {
     stop_cheat_caller_address(reg.contract_address);
 
     start_cheat_caller_address(mkt.contract_address, ANON());
-    let auth = ExecAuth { slot_key: SLOT, nonce: NONCE_A };
+    // Never claimed, so the registry never recorded a commitment for this
+    // slot; any nonce - even the one that would be correct once claimed -
+    // fails the ACTIVE check first.
+    let auth = real_auth(SLOT, 0);
     mkt.finance(auth, AMT);              // no ACTIVE right -> venue refuses
+}
+
+#[test]
+#[should_panic(expected: 'AUTH_NONCE_MISMATCH')]
+fn venue_rejects_a_tampered_nonce() {
+    // The vulnerability this closes: auth.nonce must be independently
+    // recomputed from the registry's own commitment, never trusted from
+    // calldata. An attacker who guesses (or is handed) an ACTIVE slot_key
+    // cannot finance it with a made-up nonce.
+    let (reg, mkt) = deploy();
+    start_cheat_caller_address(reg.contract_address, ANON());
+    reg.register_right(SLOT);
+    reg.claim(SLOT, COMMIT_A);
+    stop_cheat_caller_address(reg.contract_address);
+
+    start_cheat_caller_address(mkt.contract_address, ANON());
+    let forged = ExecAuth { slot_key: SLOT, nonce: 0xdead };
+    mkt.finance(forged, AMT);
+}
+
+#[test]
+#[should_panic(expected: 'RIGHT_ALREADY_FINANCED')]
+fn venue_refuses_to_finance_the_same_active_right_twice() {
+    // The other half of the same vulnerability: even with the correct,
+    // properly-derived auth, a right can be financed at most once while
+    // ACTIVE. Financing is tracked per slot_key, not per nonce.
+    let (reg, mkt) = deploy();
+    start_cheat_caller_address(reg.contract_address, ANON());
+    reg.register_right(SLOT);
+    reg.claim(SLOT, COMMIT_A);
+    stop_cheat_caller_address(reg.contract_address);
+
+    start_cheat_caller_address(mkt.contract_address, ANON());
+    let auth = real_auth(SLOT, COMMIT_A);
+    mkt.finance(auth, AMT);
+    mkt.finance(auth, AMT); // same right, still ACTIVE -> refused
 }
 
 #[test]
@@ -77,7 +125,7 @@ fn venue_refuses_after_consumption() {
     stop_cheat_caller_address(reg.contract_address);
 
     start_cheat_caller_address(mkt.contract_address, ANON());
-    let auth = ExecAuth { slot_key: SLOT, nonce: NONCE_A };
+    let auth = real_auth(SLOT, COMMIT_A);
     mkt.finance(auth, AMT);
     mkt.settle(auth);                    // repay + release
     stop_cheat_caller_address(mkt.contract_address);
@@ -115,7 +163,7 @@ fn second_venue_refuses_a_consumed_right() {
     reg.claim(SLOT, COMMIT_A);
     stop_cheat_caller_address(reg.contract_address);
 
-    let auth = ExecAuth { slot_key: SLOT, nonce: NONCE_A };
+    let auth = real_auth(SLOT, COMMIT_A);
     start_cheat_caller_address(mkt1.contract_address, ANON());
     mkt1.finance(auth, AMT);          // financed at venue 1
     mkt1.settle(auth);
