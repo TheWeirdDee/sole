@@ -9,8 +9,8 @@
 
 import { Contract, RpcProvider, type AccountInterface, type WalletAccountV6 } from "starknet";
 import {
-  canonicalAssetId, deriveClaimCommitment, deriveNullifier, deriveExecNonce, deriveSlotKey, Felt,
-} from "./derive";
+  canonicalAssetId, deriveClaimCommitment, deriveNullifier, deriveExecNonce, deriveSlotKey, type Felt,
+} from "./derive.ts";
 
 // The Wallet API route (docs/INTEGRATING.md): Sole talks to the user's
 // privacy-enabled wallet, never to a viewing key. WalletAccountV6 is the
@@ -24,15 +24,20 @@ export type SoleAccount = WalletAccountV6;
 // Account works here, script-held key included, not just a connected wallet.
 export type ExecutableAccount = Pick<AccountInterface, "execute">;
 
-export enum RightState {
-  Unclaimed = "UNCLAIMED",
-  Active = "ACTIVE",
-  Consumed = "CONSUMED",
-}
+// Plain const objects, not TS `enum`: an enum compiles to real runtime code,
+// not just type annotations, which `node --experimental-strip-types` (how
+// scripts/*.ts run in this repo) cannot transform - it only strips types.
+export const RightState = {
+  Unclaimed: "UNCLAIMED",
+  Active: "ACTIVE",
+  Consumed: "CONSUMED",
+} as const;
+export type RightState = typeof RightState[keyof typeof RightState];
 
 // Mirrors the Cairo enum's declaration order in claim_anonymizer.cairo -
 // Starknet encodes an enum as its variant index, so this order is load-bearing.
-enum ClaimOperation { Claim = 0, Settle = 1, Finance = 2, SettleAndRepay = 3 }
+const ClaimOperation = { Claim: 0, Settle: 1, Finance: 2, SettleAndRepay: 3 } as const;
+type ClaimOperation = typeof ClaimOperation[keyof typeof ClaimOperation];
 
 // Every field ClaimAnonymizer::privacy_invoke's flat positional signature
 // accepts. Each call fills in what its operation needs; the rest zero-fill,
@@ -67,11 +72,18 @@ export interface CounterpartyView { slotKey: Felt; satisfied: boolean }
 export interface AuditorView extends ClaimantView { nullifier?: Felt; consumedAt?: number }
 
 export class SoleClient {
-  constructor(
-    private provider: RpcProvider,
-    private addrs: SoleAddresses,
-    private registryAbi: any,
-  ) {}
+  // Explicit fields, not constructor parameter properties: the shorthand
+  // generates real assignment code, which - like `enum` - strip-only mode
+  // cannot transform.
+  private provider: RpcProvider;
+  private addrs: SoleAddresses;
+  private registryAbi: any;
+
+  constructor(provider: RpcProvider, addrs: SoleAddresses, registryAbi: any) {
+    this.provider = provider;
+    this.addrs = addrs;
+    this.registryAbi = registryAbi;
+  }
 
   private registry() {
     return new Contract({
