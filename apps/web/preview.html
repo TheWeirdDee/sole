@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Sole — private exclusivity for economic rights</title>
+<title>Sole — single-use execution rights for economic rights on STRK20</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
@@ -153,9 +153,9 @@
 <!-- ============ HOME ============ -->
 <main id="home" class="route on">
   <div class="wrap hero">
-    <div class="eyebrow">A privacy-preserving exclusivity protocol on STRK20</div>
-    <h1>A right, held by one party, without revealing who.</h1>
-    <p class="sub">Sole makes an economic right privately ownable and publicly enforceable. The chain proves the right can be claimed exactly once. It never learns the claimant, the amount, or the relationship behind it.</p>
+    <div class="eyebrow">A single-use execution-right protocol on STRK20</div>
+    <h1>One right. One financing. Enforced everywhere, without revealing who.</h1>
+    <p class="sub">Sole turns a financial right into a single-use execution right: claimed privately, it authorizes one real financing action, then is spent for good. Two lenders can never finance the same right, at any venue. The chain enforces it without ever learning the holder, the amount, or the relationship.</p>
     <div class="hero-actions">
       <button class="btn btn-primary" onclick="go('app')">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
@@ -190,7 +190,7 @@
         <div class="seal-label" id="heroSealLabel">Right held.<br>Claimant sealed.</div>
       </div>
     </div>
-    <p class="small" style="margin-top:14px">Bank A holds the right. When Bank B tries to finance the same receivable, the chain refuses — without revealing Bank A. <button class="btn btn-ghost" style="padding:4px 10px;font-size:14px" onclick="playHero()">Replay</button></p>
+    <p class="small" style="margin-top:14px">Bank A finances the receivable and consumes the right. When Bank B tries the same receivable — at this venue or any other — the chain refuses, without revealing Bank A. <button class="btn btn-ghost" style="padding:4px 10px;font-size:14px" onclick="playHero()">Replay</button></p>
   </div>
 
   <section class="band"><div class="wrap">
@@ -204,7 +204,7 @@
       <div class="cell"><div class="n">03 — consumption</div><h3>nullifier</h3>
         <p>Burned once at settlement. Producing it needs the claimant secret, so only the holder settles — and never twice.</p></div>
     </div>
-    <p class="small" style="margin-top:14px">The public chain holds only <span class="mono">slot_key → state → commitment</span>. Never an identity, an amount, or a counterparty.</p>
+    <p class="small" style="margin-top:14px">The public chain holds only <span class="mono">slot_key → state → commitment</span>. Never an identity, an amount, or a counterparty. Once consumed, the right is spent for every venue — not just the one it settled on.</p>
   </div></section>
 
   <section class="band"><div class="wrap">
@@ -224,11 +224,13 @@
   </div></section>
 
   <section class="band"><div class="wrap">
-    <div class="eyebrow">Why the privacy layer is causal, not decorative</div>
-    <div class="flowdiag">Without STRK20:  Bank A → public wallet → public funding → <span class="r">public relationship</span>
+    <div class="eyebrow">Three layers, and the separation is the point</div>
+    <div class="flowdiag">STRK20        provides private money    → shielded notes, private transfer
+the market    provides liquidity        → lending, repayment
+<span class="c">Sole</span>          provides the scarce right → one claim, one financing, consumed once
 
-With STRK20:     Bank A → shielded funding → private transfer → anonymizer → claim() → <span class="c">public ACTIVE state</span></div>
-    <p class="lede measure" style="margin-top:20px">Remove the anonymizer and the claiming wallet becomes the caller on the public transition — the identity leaks and the thesis collapses. The nullifier that consumes a claim is STRK20's own double-spend primitive, reused rather than reinvented.</p>
+Bank A → shielded funding → anonymizer → claim() → <span class="c">ACTIVE</span> → authorizes financing → market executes → <span class="c">CONSUMED</span></div>
+    <p class="lede measure" style="margin-top:20px">The venue is downstream of Sole: it can only execute a right Sole has activated, and it refuses a spent one — at this market or a different one entirely. Remove the anonymizer and the claiming wallet leaks onto the public transition; remove Sole and the same right can be financed twice.</p>
     <div class="hero-actions"><button class="btn btn-primary" onclick="go('app')">Walk the full lifecycle</button></div>
   </div></section>
 </main>
@@ -237,8 +239,8 @@ With STRK20:     Bank A → shielded funding → private transfer → anonymizer
 <main id="app" class="route">
   <div class="wrap" style="padding:44px 0 20px">
     <div class="eyebrow">Demo · one receivable, two banks</div>
-    <h1 style="font-size:34px">Finance a right. Then try to finance it twice.</h1>
-    <p class="lede measure" style="margin-top:12px">Fixture data below is labelled as a fixture. The registry itself knows nothing about receivables — it enforces exclusivity over a commitment.</p>
+    <h1 style="font-size:34px">Finance a right. Then try to finance it twice — anywhere.</h1>
+    <p class="lede measure" style="margin-top:12px">Bank A privately claims the right and finances it against a market. Bank B is refused. After settlement, a second, unrelated venue is refused too. Fixture data is labelled as a fixture — the registry knows nothing about receivables; it enforces a single-use right over a commitment.</p>
 
     <div class="stepper" id="stepper"></div>
 
@@ -299,6 +301,17 @@ With STRK20:     Bank A → shielded funding → private transfer → anonymizer
       </div>
     </div>
 
+    <!-- cross-venue refusal: the thing a single-market rollback cannot do -->
+    <div class="panel" id="crossVenue" style="display:none;margin-top:18px">
+      <h3 style="font-size:19px;margin-bottom:4px">A different venue, later</h3>
+      <p class="small" style="margin-bottom:14px">The right is consumed. Another lender, at another market that shares no ledger with the first, tries to finance the same underlying right. Single-use is global — it is refused here too, and this venue never learns who financed it first.</p>
+      <button class="btn btn-claret" id="btnVenue2" onclick="venue2()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>
+        Finance at a second venue
+      </button>
+      <div class="txrow" id="txV2" style="display:none"><span class="dot rev"></span><span id="txV2hash" class="mono">reverted at venue 2: right is spent</span></div>
+    </div>
+
     <!-- scoped disclosure -->
     <section class="band" style="border-top:0;padding-top:34px">
       <h3 style="font-size:20px;margin-bottom:4px">What each party is allowed to see</h3>
@@ -336,7 +349,7 @@ With STRK20:     Bank A → shielded funding → private transfer → anonymizer
 <main id="protocol" class="route">
   <div class="wrap" style="padding:44px 0">
     <div class="eyebrow">Protocol</div>
-    <h1 style="font-size:34px">The state machine and the assumptions under it.</h1>
+    <h1 style="font-size:34px">One right, one financing, consumed once — the machine underneath.</h1>
 
     <h2 style="font-size:22px;margin:34px 0 12px">Shipped states</h2>
     <div class="flowdiag">        register_right()
@@ -381,7 +394,7 @@ and:
 </main>
 
 <footer><div class="wrap">
-  Sole · a privacy-preserving exclusivity protocol for economic rights on STRK20 · Apache-2.0
+  Sole · a single-use execution-right protocol for economic rights on STRK20 · Apache-2.0
   <div class="foothash">Demo fixture data is labelled as fixture. The registry is use-case agnostic.</div>
 </div></footer>
 
@@ -441,6 +454,7 @@ function claimA(){
   const h=fakehash();document.getElementById('txA').style.display='flex';
   document.getElementById('txAhash').textContent='claim '+h+' → ACTIVE';
   plog('Bank A: shield → privacy_invoke → claim() '+h+' → ACTIVE');
+  plog('Sole authorizes financing → money market executes against the venue '+fakehash());
   renderStepper();renderProjection();
 }
 function claimB(){
@@ -448,7 +462,7 @@ function claimB(){
   const h=fakehash();document.getElementById('txB').style.display='flex';
   document.getElementById('txBhash').textContent=h+' reverted: RIGHT_ALREADY_ACTIVE';
   document.getElementById('appRefused').classList.add('on');
-  plog('Bank B: claim(same slot) '+h+' → REVERT RIGHT_ALREADY_ACTIVE (moved no state)');
+  plog('Bank B: claim(same slot) '+h+' → REVERT RIGHT_ALREADY_ACTIVE · venue never called');
   renderStepper();
 }
 function settle(){
@@ -458,8 +472,16 @@ function settle(){
   document.getElementById('btnSettle').disabled=true;
   const h=fakehash();document.getElementById('txS').style.display='flex';
   document.getElementById('txShash').textContent='settle '+h+' → CONSUMED';
-  plog('Bank A: settle() reveal nullifier '+h+' → CONSUMED');
+  plog('Bank A: settle_and_repay() → venue repaid + nullifier '+h+' → CONSUMED');
+  document.getElementById('crossVenue').style.display='block';
   renderStepper();renderProjection();
+}
+function venue2(){
+  const h=fakehash();
+  document.getElementById('txV2').style.display='flex';
+  document.getElementById('txV2hash').textContent=h+' reverted at venue 2: AUTH_RIGHT_NOT_ACTIVE · holder still hidden';
+  document.getElementById('btnVenue2').disabled=true;
+  plog('Venue 2 (different market, different lender): finance(same right) '+h+' → REVERT · right is spent everywhere');
 }
 function resetApp(){
   S={connected:S.connected,state:'UNCLAIMED',holder:null,rejected:false,view:'public',log:[]};
@@ -472,6 +494,9 @@ function resetApp(){
   document.getElementById('btnClaimB').disabled=true;
   document.getElementById('btnSettle').disabled=true;
   document.getElementById('applog').textContent='Reset. Let Bank A claim.';
+  document.getElementById('crossVenue').style.display='none';
+  const bv=document.getElementById('btnVenue2'); if(bv) bv.disabled=false;
+  const tv=document.getElementById('txV2'); if(tv) tv.style.display='none';
   renderStepper();renderProjection();
 }
 // scoped projections
