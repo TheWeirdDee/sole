@@ -7,7 +7,7 @@
 // the STRK20 pool's privacy_invoke so the caller wallet never links to the
 // claim (see docs/INTEGRATING.md for the exact wiring).
 
-import { Contract, RpcProvider, type WalletAccountV6 } from "starknet";
+import { Contract, RpcProvider, type AccountInterface, type WalletAccountV6 } from "starknet";
 import {
   canonicalAssetId, deriveClaimCommitment, deriveNullifier, deriveExecNonce, deriveSlotKey, Felt,
 } from "./derive";
@@ -15,7 +15,14 @@ import {
 // The Wallet API route (docs/INTEGRATING.md): Sole talks to the user's
 // privacy-enabled wallet, never to a viewing key. WalletAccountV6 is the
 // starknet.js >=10.4.0 type exposing strk20InvokeTransaction/strk20Balances.
+// It requires a real connected wallet extension - it cannot be constructed
+// headlessly from a private key alone.
 export type SoleAccount = WalletAccountV6;
+
+// register() carries no value and never goes through privacy_invoke (see
+// IClaimAnonymizer::register), so it only needs plain execute() - any
+// Account works here, script-held key included, not just a connected wallet.
+export type ExecutableAccount = Pick<AccountInterface, "execute">;
 
 export enum RightState {
   Unclaimed = "UNCLAIMED",
@@ -95,7 +102,7 @@ export class SoleClient {
   /** Register a canonical right (UNCLAIMED). Carries no value, so it calls
    *  the anonymizer directly - it is not gated behind the pool's
    *  privacy_invoke (see IClaimAnonymizer::register). */
-  async register(account: SoleAccount, reference: string): Promise<string> {
+  async register(account: ExecutableAccount, reference: string): Promise<string> {
     const slotKey = this.slotKeyFor(reference);
     return this.anonymizerCall(account, "register", [slotKey]);
   }
@@ -186,7 +193,7 @@ export class SoleClient {
    *  privacy_invoke wrapping, since nothing here needs the wallet's viewing
    *  key or proving path. */
   private async anonymizerCall(
-    account: SoleAccount, method: string, calldata: Felt[],
+    account: ExecutableAccount, method: string, calldata: Felt[],
   ): Promise<string> {
     const { transaction_hash } = await account.execute({
       contractAddress: this.addrs.anonymizer,
