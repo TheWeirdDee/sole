@@ -3,3 +3,4 @@
 pub mod rights_registry;
 pub mod right_root;
 pub mod claim_anonymizer;
+pub mod execution_adapter;
