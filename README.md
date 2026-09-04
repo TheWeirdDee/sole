@@ -17,6 +17,18 @@ The enforcement state is public. The economic relationship behind it is private.
 
 Live demo: `FILL` · Video: `FILL` · Mainnet manifest: [`strk20.json`](./strk20.json)
 
+## Mainnet deployments
+
+| Contract | Address |
+| --- | --- |
+| RightsRegistry | [`0x057a...e6f4c`](https://voyager.online/contract/0x057a4c75612430dae3a79485c41a53f986c42526df59af4f73485cde56be6f4c) |
+| ClaimAnonymizer | [`0x01dd...5c74`](https://voyager.online/contract/0x01ddb10db13096b973a9a63d02f5e9a6370d3b592cd6ca02a91f5729ca685c74) |
+| FirstRegistrationRoot | [`0x0368...1aae5`](https://voyager.online/contract/0x0368203c991cfcc239560bbfe2dfa52a84bbf950f0603010229180d08341aae5) |
+| FallbackMarket (venue 1) | [`0x0788...6cf28`](https://voyager.online/contract/0x0788f8439042f8750ec90638bc764dd36f766930770238c630df70e667e6cf28) |
+| FallbackMarket (venue 2) | [`0x01db...6d27c`](https://voyager.online/contract/0x01dbf93d533f9b1d4aff959cfd10cd53136663db81f101d74db8008825b6d27c) |
+
+Full addresses and the STRK20 pool address in [`evidence/deployment.json`](./evidence/deployment.json).
+
 ## Why this needs to exist
 
 An economic right — a receivable, a licence, an allocation, a collateral claim — often must be *exclusive*: it can be held by exactly one party at a time. Today exclusivity is enforced by a registry everyone can read, or by no registry at all.
