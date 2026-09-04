@@ -107,6 +107,8 @@ Nothing here is self-reported. Each claim maps to an artifact that can be indepe
 | Claiming wallet unlinked from the right | `direct_registry_call_reverts` + anonymizer-routed mainnet claim (pending) |
 | The venue executes only when Sole authorizes | `tests/adversarial/test_venue_gating.cairo` |
 | A consumed right is refused at a *different* venue too | `second_venue_refuses_a_consumed_right` |
+| An execution auth is bound to the real on-chain commitment, not a caller-supplied value | `venue_rejects_a_tampered_nonce` |
+| A right can be financed at most once while ACTIVE | `venue_refuses_to_finance_the_same_active_right_twice` |
 
 **What's real on mainnet today:** all five contracts are deployed and correctly wired (`registry.anonymizer()` returns the live `ClaimAnonymizer` address, independently verified). `SoleClient.register()` has been proven end to end from a script — [tx `0x7797bdee...ad7b7`](https://voyager.online/tx/0x7797bdeed0c7a852f0ed025e3f3dafa2fd77417b00937081b443eb00b9ad7b7), read back as `UNCLAIMED` via `state_of()`. Declare/deploy/wiring transaction hashes are in [`evidence/deployment.json`](./evidence/deployment.json).
 
@@ -120,7 +122,7 @@ npm run test:sdk                      # cross-language derivation parity
 node --experimental-strip-types scripts/verify-mainnet.ts --all
 ```
 
-`snforge test` passes clean — 16/16, including the venue-gating and cross-venue-refusal cases. Getting there surfaced a real upstream problem worth recording honestly: `snforge` 0.63.0's Cairo test plugin fails to build on any platform (confirmed on native Windows and on a clean Ubuntu CI runner) because of a transitive dependency declaring unsupported `extern` ABIs. `snforge_std` pinned to `0.62.1` avoids the broken dependency entirely; `contracts/Scarb.toml` and the CI workflow both reflect that pin.
+`snforge test` passes clean — 18/18 adversarial and lifecycle cases, plus 4 cross-language derivation-parity cases (22 total), including the venue-gating, tampered-nonce, double-financing, and cross-venue-refusal cases. Getting there surfaced a real upstream problem worth recording honestly: `snforge` 0.63.0's Cairo test plugin fails to build on any platform (confirmed on native Windows and on a clean Ubuntu CI runner) because of a transitive dependency declaring unsupported `extern` ABIs. `snforge_std` pinned to `0.62.1` avoids the broken dependency entirely; `contracts/Scarb.toml` and the CI workflow both reflect that pin.
 
 The adversarial suite proves, each with the exact panic it must produce:
 
@@ -135,7 +137,11 @@ direct registry call       -> CALLER_NOT_ANONYMIZER
 venue call without an ACTIVE right   -> AUTH_RIGHT_NOT_ACTIVE
 venue call after consumption         -> AUTH_RIGHT_NOT_ACTIVE
 second venue on a consumed right     -> AUTH_RIGHT_NOT_ACTIVE
+tampered execution-auth nonce        -> AUTH_NONCE_MISMATCH
+double-financing the same right      -> RIGHT_ALREADY_FINANCED
 ```
+
+Plus 4 tests asserting the SDK's Poseidon derivation output matches Cairo's byte-for-byte (`contracts/tests/adversarial/test_parity_check.cairo` and `packages/sole-sdk/src/derive.test.ts`), since the auth-nonce check above depends on that match exactly.
 
 `verify-mainnet.ts` re-reads each mainnet receipt from chain, confirms the emitting contract, checks the transaction routed through the anonymizer, and decodes the event to the transition it must represent — treating a refusal as a first-class artifact that must have moved no state.
 

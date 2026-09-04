@@ -74,7 +74,7 @@ pub mod ExecTags {
 pub mod FallbackMarket {
     use super::{IExecutionAdapter, ExecAuth, ExecTags};
     use core::poseidon::poseidon_hash_span;
-    use starknet::{ContractAddress, get_caller_address};
+    use starknet::{ContractAddress, get_caller_address, get_contract_address};
     use starknet::storage::{
         Map, StoragePointerReadAccess, StoragePointerWriteAccess,
         StorageMapReadAccess, StorageMapWriteAccess,
@@ -161,7 +161,10 @@ pub mod FallbackMarket {
             pos
         }
         fn registry(self: @ContractState) -> ContractAddress { self.registry.read() }
-        fn venue(self: @ContractState) -> ContractAddress { self.registry.read() }
+        // FallbackMarket has no separate venue contract - it IS the venue
+        // (a self-contained in-repo vault), so this returns its own address,
+        // not the registry's.
+        fn venue(self: @ContractState) -> ContractAddress { get_contract_address() }
     }
 }
 
