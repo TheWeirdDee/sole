@@ -13,7 +13,7 @@ Anyone holding a canonical id can read a right's lifecycle state (D-002, D-008).
 
 ## T-3 — Timing / entry-exit correlation
 STRK20 shields the funding path, but public deposit/withdrawal legs and transaction timing can correlate a shielding event with a later claim.
-- **Mitigation.** Shield ahead of time; do not shield-then-immediately-claim. Same boundary Limen documents.
+- **Mitigation.** Shield ahead of time; do not shield-then-immediately-claim.
 
 ## T-4 — Anonymizer bypass
 If the registry accepted direct calls, the claiming wallet would leak.
