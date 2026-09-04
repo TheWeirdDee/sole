@@ -6,50 +6,84 @@
 // public transition, linking a real identity to the exclusive right and
 // defeating the entire thesis.
 //
-// The anonymizer is invoked through the STRK20 pool's privacy_invoke path:
-// the pool proves a shielded funding note was spent and drives this contract,
-// so the registry only ever sees the anonymizer as caller. The claiming
-// wallet never appears on the RightsRegistry transition.
+// This is a standard STRK20 anonymizer helper: the pool calls it through the
+// same privacy_invoke seam as every other helper (Swap, Vesu, Escrow) - one
+// entry point, named privacy_invoke, dispatched by an operation argument,
+// called via the pool's INVOKE_SELECTOR once it has proved a shielded
+// funding note was spent. The registry only ever sees the anonymizer as
+// caller; the claiming wallet never appears on the RightsRegistry
+// transition.
 //
 //   claimant wallet
 //        | shielded STRK20 funding note (private_transfer)
 //        v
-//   STRK20 pool  --privacy_invoke-->  ClaimAnonymizer
+//   STRK20 pool  --privacy_invoke(operation, ...)-->  ClaimAnonymizer
 //                                          |
 //                                          v
-//                                   RightsRegistry.claim()
+//                          RightsRegistry / ExecutionAdapter
 //
-// NOTE ON SCOPE: the funding-note verification is delegated to the STRK20
-// pool via privacy_invoke (the pool proves the note in zero knowledge before
-// calling here). This contract is the application-side execution boundary; it
-// forwards the claim/settle into the registry under its own address. See
-// docs/INTEGRATING.md for the exact privacy_invoke wiring and the SDK path.
+// Sole's operations are state transitions, not value handed back to the
+// pool, so privacy_invoke returns an empty Span<OpenNoteDeposit> in every
+// branch - the same shape the Escrow reference helper returns for its
+// Deposit case ("tokens stay parked, nothing to credit yet"). See
+// docs/INTEGRATING.md for the exact wiring and the SDK path.
 
 use starknet::ContractAddress;
 use sole_contracts::execution_adapter::ExecAuth;
 
+/// Mirrors privacy::objects::OpenNoteDeposit (the STRK20 pool ABI every
+/// privacy_invoke helper returns). Defined locally rather than as a
+/// dependency on the full starknet-privacy workspace: Starknet calldata is
+/// structural, so matching field order and types is what the pool's
+/// deserializer actually requires.
+#[derive(Copy, Drop, Serde)]
+pub struct OpenNoteDeposit {
+    pub note_id: felt252,
+    pub token: ContractAddress,
+    pub amount: u128,
+}
+
+/// The action the pool is driving through privacy_invoke. Mirrors the
+/// Escrow reference helper's operation-enum pattern: one entry point,
+/// dispatched by an enum, rather than one entry point per action. Register
+/// carries no value and is not in this enum - it stays a direct, ungated
+/// call (see IClaimAnonymizer::register).
+#[derive(Serde, Copy, Drop, PartialEq, Debug)]
+pub enum ClaimOperation {
+    Claim,
+    Settle,
+    Finance,
+    SettleAndRepay,
+}
+
 #[starknet::interface]
 pub trait IClaimAnonymizer<TContractState> {
+    /// Registration carries no value and touches no privacy state, so it
+    /// stays outside the privacy_invoke seam - anyone can register a right.
     fn register(ref self: TContractState, slot_key: felt252);
-    fn claim_through(ref self: TContractState, slot_key: felt252, claim_commitment: felt252);
-    fn settle_through(ref self: TContractState, slot_key: felt252, nullifier: felt252);
-    /// Drive one financing action against the venue. Only reaches the adapter
-    /// because the pool proved a shielded funding note (privacy_invoke). The
-    /// adapter itself re-checks that Sole says the right is ACTIVE.
-    fn finance_through(
-        ref self: TContractState, adapter: ContractAddress, auth: ExecAuth, amount_commitment: felt252,
-    );
-    /// Settle: repay the venue position and consume the Sole right atomically.
-    fn settle_and_repay(
-        ref self: TContractState, adapter: ContractAddress, slot_key: felt252, nullifier: felt252, auth: ExecAuth,
-    );
+
+    /// The entry point every STRK20 anonymizer contract must expose. Calldata
+    /// is deserialized positionally; each operation reads only the fields it
+    /// needs and ignores the rest, the same convention the Escrow reference
+    /// helper uses for its Deposit/Claim split.
+    fn privacy_invoke(
+        ref self: TContractState,
+        operation: ClaimOperation,
+        slot_key: felt252,
+        claim_commitment: felt252,
+        nullifier: felt252,
+        adapter: ContractAddress,
+        auth: ExecAuth,
+        amount_commitment: felt252,
+    ) -> Span<OpenNoteDeposit>;
+
     fn registry(self: @TContractState) -> ContractAddress;
     fn pool(self: @TContractState) -> ContractAddress;
 }
 
 #[starknet::contract]
 pub mod ClaimAnonymizer {
-    use super::IClaimAnonymizer;
+    use super::{IClaimAnonymizer, ClaimOperation, OpenNoteDeposit};
     use starknet::{ContractAddress, get_caller_address};
     use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
     use sole_contracts::rights_registry::{
@@ -62,7 +96,7 @@ pub mod ClaimAnonymizer {
     #[storage]
     struct Storage {
         registry: ContractAddress,
-        // the STRK20 privacy pool: only it may drive claim/settle, because
+        // the STRK20 privacy pool: only it may drive privacy_invoke, because
         // only it can prove a shielded funding note was spent to get here.
         pool: ContractAddress,
     }
@@ -97,32 +131,34 @@ pub mod ClaimAnonymizer {
             self.reg().register_right(slot_key);
         }
 
-        // Claim binds shielded funding -> must arrive via privacy_invoke.
-        fn claim_through(ref self: ContractState, slot_key: felt252, claim_commitment: felt252) {
+        fn privacy_invoke(
+            ref self: ContractState,
+            operation: ClaimOperation,
+            slot_key: felt252,
+            claim_commitment: felt252,
+            nullifier: felt252,
+            adapter: ContractAddress,
+            auth: ExecAuth,
+            amount_commitment: felt252,
+        ) -> Span<OpenNoteDeposit> {
             self.assert_pool();
-            self.reg().claim(slot_key, claim_commitment);
-        }
-
-        // Settlement consumes the private claim -> also via privacy_invoke.
-        fn settle_through(ref self: ContractState, slot_key: felt252, nullifier: felt252) {
-            self.assert_pool();
-            self.reg().settle(slot_key, nullifier);
-        }
-
-        fn finance_through(
-            ref self: ContractState, adapter: ContractAddress, auth: ExecAuth, amount_commitment: felt252,
-        ) {
-            self.assert_pool();
-            IExecutionAdapterDispatcher { contract_address: adapter }.finance(auth, amount_commitment);
-        }
-
-        fn settle_and_repay(
-            ref self: ContractState, adapter: ContractAddress, slot_key: felt252, nullifier: felt252, auth: ExecAuth,
-        ) {
-            self.assert_pool();
-            // repay the venue first, then consume the right - both or neither.
-            IExecutionAdapterDispatcher { contract_address: adapter }.settle(auth);
-            self.reg().settle(slot_key, nullifier);
+            match operation {
+                // Claim binds shielded funding -> must arrive via privacy_invoke.
+                ClaimOperation::Claim => { self.reg().claim(slot_key, claim_commitment); },
+                // Settlement consumes the private claim -> also via privacy_invoke.
+                ClaimOperation::Settle => { self.reg().settle(slot_key, nullifier); },
+                ClaimOperation::Finance => {
+                    IExecutionAdapterDispatcher { contract_address: adapter }
+                        .finance(auth, amount_commitment);
+                },
+                ClaimOperation::SettleAndRepay => {
+                    // repay the venue first, then consume the right - both or neither.
+                    IExecutionAdapterDispatcher { contract_address: adapter }.settle(auth);
+                    self.reg().settle(slot_key, nullifier);
+                },
+            };
+            // State transitions only - nothing for the pool to credit.
+            array![].span()
         }
 
         fn registry(self: @ContractState) -> ContractAddress { self.registry.read() }
