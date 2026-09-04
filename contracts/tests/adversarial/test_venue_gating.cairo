@@ -21,13 +21,12 @@ fn ANON() -> ContractAddress { 'anonymizer'.try_into().unwrap() }
 
 fn deploy() -> (IRightsRegistryDispatcher, IExecutionAdapterDispatcher) {
     let reg_c = declare("RightsRegistry").unwrap().contract_class();
-    let (reg_addr, _) = reg_c.deploy(@array![ANON().into()]).unwrap();
+    let (reg_addr, _) = reg_c.deploy(@array![]).unwrap();
+    let reg = IRightsRegistryDispatcher { contract_address: reg_addr };
+    reg.initialize_anonymizer(ANON());
     let mkt_c = declare("FallbackMarket").unwrap().contract_class();
     let (mkt_addr, _) = mkt_c.deploy(@array![reg_addr.into(), ANON().into()]).unwrap();
-    (
-        IRightsRegistryDispatcher { contract_address: reg_addr },
-        IExecutionAdapterDispatcher { contract_address: mkt_addr },
-    )
+    (reg, IExecutionAdapterDispatcher { contract_address: mkt_addr })
 }
 
 const SLOT: felt252 = 0x5107;
@@ -97,11 +96,12 @@ fn venue_refuses_after_consumption() {
 #[should_panic(expected: 'AUTH_RIGHT_NOT_ACTIVE')]
 fn second_venue_refuses_a_consumed_right() {
     let reg_c = declare("RightsRegistry").unwrap().contract_class();
-    let (reg_addr, _) = reg_c.deploy(@array![ANON().into()]).unwrap();
+    let (reg_addr, _) = reg_c.deploy(@array![]).unwrap();
+    let reg = IRightsRegistryDispatcher { contract_address: reg_addr };
+    reg.initialize_anonymizer(ANON());
     let mkt_c = declare("FallbackMarket").unwrap().contract_class();
     let (mkt1_addr, _) = mkt_c.deploy(@array![reg_addr.into(), ANON().into()]).unwrap();
     let (mkt2_addr, _) = mkt_c.deploy(@array![reg_addr.into(), ANON().into()]).unwrap(); // second venue
-    let reg = IRightsRegistryDispatcher { contract_address: reg_addr };
     let mkt1 = IExecutionAdapterDispatcher { contract_address: mkt1_addr };
     let mkt2 = IExecutionAdapterDispatcher { contract_address: mkt2_addr };
 

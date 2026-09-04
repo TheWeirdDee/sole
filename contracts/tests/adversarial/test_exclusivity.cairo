@@ -27,8 +27,12 @@ fn STRANGER() -> ContractAddress { 'stranger'.try_into().unwrap() }
 
 fn deploy() -> IRightsRegistryDispatcher {
     let contract = declare("RightsRegistry").unwrap().contract_class();
-    let (addr, _) = contract.deploy(@array![ANON().into()]).unwrap();
-    IRightsRegistryDispatcher { contract_address: addr }
+    let (addr, _) = contract.deploy(@array![]).unwrap();
+    let reg = IRightsRegistryDispatcher { contract_address: addr };
+    // Same (default) caller as the deploy() above, so it matches the
+    // deployer initialize_anonymizer checks against.
+    reg.initialize_anonymizer(ANON());
+    reg
 }
 
 // slot_key and commitment values here stand in for the SDK-derived Poseidon
@@ -154,4 +158,24 @@ fn direct_registry_call_reverts() {
     // privacy path or the claimant identity would leak.
     start_cheat_caller_address(r.contract_address, STRANGER());
     r.register_right(SLOT_A);
+}
+
+#[test]
+#[should_panic(expected: 'CALLER_NOT_DEPLOYER')]
+fn initialize_anonymizer_by_non_deployer_reverts() {
+    // Front-running check: initialize_anonymizer exists to break the
+    // registry/anonymizer constructor cycle, and is only safe if nobody but
+    // the deployer can win the race to call it first.
+    let contract = declare("RightsRegistry").unwrap().contract_class();
+    let (addr, _) = contract.deploy(@array![]).unwrap();
+    let reg = IRightsRegistryDispatcher { contract_address: addr };
+    start_cheat_caller_address(reg.contract_address, STRANGER());
+    reg.initialize_anonymizer(ANON());
+}
+
+#[test]
+#[should_panic(expected: 'ANONYMIZER_ALREADY_SET')]
+fn initialize_anonymizer_twice_reverts() {
+    let r = deploy(); // already initialized once, by deploy()'s own caller
+    r.initialize_anonymizer(STRANGER());
 }
