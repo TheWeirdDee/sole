@@ -2,40 +2,229 @@
 // Sole demo flow (product invariant). A human drives the whole lifecycle:
 // connect -> register -> claim (private) -> finance (venue executes) ->
 // duplicate refused -> settle (consumed) -> second venue refused -> disclosure.
-// Local state model here so the flow is demonstrable without keys; the shipped
-// build wires these to @sole/sdk SoleClient behind a demo/live toggle.
-import { useState } from "react";
+//
+// Live mode (default) calls the real deployed contracts through the
+// connected wallet via @sole/sdk SoleClient - every action below is a real
+// mainnet transaction, linked to Voyager, reverts shown honestly from the
+// receipt. Demo mode is the offline fallback: the same flow against a local
+// state model with illustrative hashes, for when no wallet is available.
+import { useState, useEffect } from "react";
 import {
-  FileLock2, ShieldCheck, Ban, CheckCircle2, Eye, EyeOff, Landmark, Lock, Wallet,
+  FileLock2, ShieldCheck, Ban, CheckCircle2, Eye, EyeOff, Landmark, Lock, Wallet, Loader2,
 } from "lucide-react";
+import { connectWallet, getSoleClients, provider, randomFelt, voyagerTxUrl } from "../lib/sole";
 
 const ink = "#1a160f", parch = "#e9e1ce", parch2 = "#e0d6bd", claret = "#7c1d2a", faded = "#8c8267", rule = "#cabd9d";
-const S0 = { connected: false, state: "UNCLAIMED", holder: null, rejected: false, consumed: false, venue2: false, view: "public", log: [] };
 const steps = ["Connect", "Register", "A claims", "A finances", "B refused", "Settle", "2nd venue refused"];
 
+function freshReference() { return "RCV-4821-" + Date.now().toString(36); }
+
+function initialState(mode) {
+  return {
+    // Stable across server and client renders (Date.now() is not - it would
+    // hydration-mismatch); the real per-session reference is set client-only
+    // in a useEffect below, after mount.
+    mode, connected: false, account: null, reference: "RCV-4821",
+    state: "UNCLAIMED", holder: null, rejected: false, consumed: false, venue2: false,
+    view: "public", log: [], busy: null, error: null,
+    claimantSecret: null, fundingNote: null, claimCommitment: null,
+  };
+}
+
 export default function SoleDemo() {
-  const [s, setS] = useState(S0);
+  const [s, setS] = useState(() => initialState("live"));
   const push = (l) => setS((p) => ({ ...p, log: [...p.log, l] }));
-  const hash = () => "0x" + Array.from({ length: 6 }, () => Math.floor(Math.random() * 65536).toString(16).padStart(4, "0")).join("");
+  const set = (patch) => setS((p) => ({ ...p, ...patch }));
+  const demoHash = () => "0x" + Array.from({ length: 6 }, () => Math.floor(Math.random() * 65536).toString(16).padStart(4, "0")).join("");
 
   const cur = !s.connected ? 0 : s.consumed ? 6 : s.rejected ? 4 : s.state === "ACTIVE" ? 3 : s.state === "UNCLAIMED" ? 1 : 2;
+  const live = s.mode === "live";
 
-  const connect = () => { setS((p) => ({ ...p, connected: true })); push("wallet connected \u00b7 register_right(RCV-4821) -> UNCLAIMED"); };
-  const claimA = () => { setS((p) => ({ ...p, state: "ACTIVE", holder: "A", rejected: false })); push("Bank A: shield -> anonymizer -> claim() " + hash() + " -> ACTIVE"); push("Sole authorizes financing -> money market executes against the venue " + hash()); };
-  const claimB = () => { setS((p) => ({ ...p, rejected: true })); push("Bank B: claim(same slot) " + hash() + " -> REVERT RIGHT_ALREADY_ACTIVE \u00b7 venue never called"); };
-  const settle = () => { setS((p) => ({ ...p, state: "CONSUMED", consumed: true, rejected: false })); push("Bank A: settle_and_repay() -> venue repaid + nullifier " + hash() + " -> CONSUMED"); };
-  const venue2 = () => { setS((p) => ({ ...p, venue2: true })); push("Venue 2 (different market, different lender): finance(same right) " + hash() + " -> REVERT \u00b7 right is spent everywhere"); };
-  const reset = () => setS(S0);
+  // Client-only: assigns the real per-session reference once mounted, so a
+  // repeat demo run doesn't collide with an earlier registration.
+  useEffect(() => { set({ reference: freshReference() }); }, []);
+
+  /** Live-mode helper: submit through SoleClient, log the tx immediately,
+   *  then wait for the receipt and log the real outcome - including the
+   *  revert reason when the chain refuses it. Reverts are logged as a
+   *  result, not thrown as a UI error: a refused transaction is the demo
+   *  working, not the demo breaking. */
+  async function runTx(label, submit) {
+    let txHash;
+    try {
+      txHash = await submit();
+    } catch (e) {
+      push(`${label}: submission failed - ${e?.message ?? e}`);
+      throw e;
+    }
+    push(`${label}: submitted ${txHash} (pending) -> ${voyagerTxUrl(txHash)}`);
+    const receipt = await provider.waitForTransaction(txHash);
+    const status = receipt.execution_status ?? receipt.finality_status;
+    if (status === "REVERTED") {
+      const reason = receipt.revert_reason ?? "(no reason reported)";
+      push(`${label}: reverted - ${reason}`);
+      return { txHash, reverted: true, reason };
+    }
+    push(`${label}: confirmed (${status})`);
+    return { txHash, reverted: false };
+  }
+
+  const toggleMode = () => {
+    if (s.busy) return;
+    setS({ ...initialState(live ? "demo" : "live"), reference: freshReference() });
+  };
+
+  const connect = async () => {
+    if (!live) {
+      set({ connected: true });
+      push("wallet connected (demo) · register_right(" + s.reference + ") -> UNCLAIMED");
+      return;
+    }
+    set({ busy: "connect", error: null });
+    try {
+      const account = await connectWallet();
+      set({ connected: true, account, busy: null });
+      const { venue1 } = await getSoleClients();
+      const { reverted, reason } = await runTx(
+        `register(${s.reference})`,
+        () => venue1.register(account, s.reference),
+      );
+      if (!reverted) push("state_of() reads UNCLAIMED");
+      else set({ error: reason });
+    } catch (e) {
+      set({ busy: null, error: e?.message ?? String(e) });
+    }
+  };
+
+  const claimA = async () => {
+    if (!live) {
+      set({ state: "ACTIVE", holder: "A", rejected: false });
+      push("Bank A: shield -> anonymizer -> claim() " + demoHash() + " -> ACTIVE (demo)");
+      push("Sole authorizes financing -> money market executes against the venue " + demoHash() + " (demo)");
+      return;
+    }
+    set({ busy: "claimA", error: null });
+    try {
+      const { venue1 } = await getSoleClients();
+      const claimantSecret = randomFelt();
+      const fundingNote = randomFelt();
+
+      const { tx: claimTx, claimCommitment } = await venue1.claim(s.account, s.reference, claimantSecret, fundingNote);
+      push(`Bank A: claim submitted ${claimTx} (pending) -> ${voyagerTxUrl(claimTx)}`);
+      const claimReceipt = await provider.waitForTransaction(claimTx);
+      const claimStatus = claimReceipt.execution_status ?? claimReceipt.finality_status;
+      if (claimStatus === "REVERTED") {
+        const reason = claimReceipt.revert_reason ?? "(no reason reported)";
+        push(`Bank A: claim reverted - ${reason}`);
+        set({ busy: null, error: reason });
+        return;
+      }
+      push("Bank A: claim confirmed -> ACTIVE");
+      set({ state: "ACTIVE", holder: "A", rejected: false, claimantSecret, fundingNote, claimCommitment, busy: "financeA" });
+
+      const amountCommitment = randomFelt();
+      const { reverted, reason } = await runTx(
+        "Bank A: finance",
+        () => venue1.finance(s.account, s.reference, claimCommitment, amountCommitment),
+      );
+      set({ busy: null });
+      if (reverted) set({ error: reason });
+    } catch (e) {
+      set({ busy: null, error: e?.message ?? String(e) });
+    }
+  };
+
+  const claimB = async () => {
+    if (!live) {
+      set({ rejected: true });
+      push("Bank B: claim(same slot) " + demoHash() + " -> REVERT RIGHT_ALREADY_ACTIVE · venue never called (demo)");
+      return;
+    }
+    set({ busy: "claimB", error: null });
+    try {
+      const { venue1 } = await getSoleClients();
+      const secretB = randomFelt();
+      const fundingB = randomFelt();
+      const { reverted } = await runTx(
+        "Bank B: claim",
+        () => venue1.claim(s.account, s.reference, secretB, fundingB).then((r) => r.tx),
+      );
+      set({ busy: null });
+      if (reverted) { push("venue never called"); set({ rejected: true }); }
+      // A confirmed duplicate claim would mean the exclusivity invariant is
+      // broken - that's a bug to surface, not a state to silently accept.
+      else set({ error: "duplicate claim did not revert - check the deployed contracts" });
+    } catch (e) {
+      set({ busy: null, error: e?.message ?? String(e) });
+    }
+  };
+
+  const settle = async () => {
+    if (!live) {
+      set({ state: "CONSUMED", consumed: true, rejected: false });
+      push("Bank A: settle_and_repay() -> venue repaid + nullifier " + demoHash() + " -> CONSUMED (demo)");
+      return;
+    }
+    set({ busy: "settle", error: null });
+    try {
+      const { venue1 } = await getSoleClients();
+      const { reverted, reason } = await runTx(
+        "Bank A: settle_and_repay",
+        () => venue1.settleAndRepay(s.account, s.reference, s.claimantSecret, s.claimCommitment),
+      );
+      set({ busy: null });
+      if (reverted) set({ error: reason });
+      else set({ state: "CONSUMED", consumed: true, rejected: false });
+    } catch (e) {
+      set({ busy: null, error: e?.message ?? String(e) });
+    }
+  };
+
+  const venue2 = async () => {
+    if (!live) {
+      set({ venue2: true });
+      push("Venue 2 (different market, different lender): finance(same right) " + demoHash() + " -> REVERT · right is spent everywhere (demo)");
+      return;
+    }
+    set({ busy: "venue2", error: null });
+    try {
+      const { venue2: client2 } = await getSoleClients();
+      const amountCommitment = randomFelt();
+      const { reverted } = await runTx(
+        "Venue 2: finance",
+        () => client2.finance(s.account, s.reference, s.claimCommitment, amountCommitment),
+      );
+      set({ busy: null });
+      if (reverted) { push("right is spent everywhere, holder still hidden"); set({ venue2: true }); }
+      else set({ error: "second-venue finance did not revert - check the deployed contracts" });
+    } catch (e) {
+      set({ busy: null, error: e?.message ?? String(e) });
+    }
+  };
+
+  const reset = () => setS({ ...initialState(s.mode), reference: freshReference() });
 
   return (
     <main style={{ maxWidth: 1000, margin: "0 auto", padding: "44px 26px 60px", fontFamily: "'Spectral',Georgia,serif", color: ink }}>
-      <div style={{ fontSize: 14, color: claret, fontStyle: "italic", marginBottom: 14 }}>Demo · one receivable, two banks</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+        <div style={{ fontSize: 14, color: claret, fontStyle: "italic", marginBottom: 14 }}>Demo · one receivable, two banks</div>
+        <button onClick={toggleMode} disabled={!!s.busy} style={{
+          fontSize: 12.5, border: `1px solid ${rule}`, background: "transparent", color: faded,
+          padding: "5px 10px", borderRadius: 2, cursor: s.busy ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+          mode: <strong style={{ color: live ? claret : ink }}>{live ? "live (mainnet)" : "demo (offline)"}</strong> — switch
+        </button>
+      </div>
       <h1 style={{ fontSize: 34, fontWeight: 600, letterSpacing: "-.015em", margin: 0 }}>Finance a right. Then try to finance it twice — anywhere.</h1>
       <p style={{ fontSize: 19, color: "#413a2b", maxWidth: 660, marginTop: 12 }}>
         Bank A privately claims the right and finances it against a market. Bank B is refused. After
         settlement, a second, unrelated venue is refused too. Fixture data is labelled as a fixture —
         the registry knows nothing about receivables; it enforces a single-use right over a commitment.
       </p>
+      {live && (
+        <p style={{ fontSize: 13, color: faded, marginTop: 6 }}>
+          On-chain reference for this session: <span className="mono">{s.reference}</span> (unique per run, so a repeat demo doesn't collide with an earlier one).
+        </p>
+      )}
 
       {/* stepper */}
       <div style={{ display: "flex", gap: 6, margin: "22px 0 26px", flexWrap: "wrap" }}>
@@ -46,11 +235,25 @@ export default function SoleDemo() {
         ))}
       </div>
 
+      {s.error && (
+        <div style={{ border: `1px solid ${claret}`, background: "#f6ece9", color: "#4a2a2c", padding: "12px 16px", marginBottom: 18, fontSize: 14 }}>
+          {s.error}
+        </div>
+      )}
+
       {/* connect */}
       <Panel>
         <h3 style={{ fontSize: 19, margin: "0 0 6px" }}>Connect a wallet</h3>
-        <p style={{ fontSize: 13, color: faded, margin: "0 0 16px" }}>A Ready wallet on Starknet mainnet, with STRK for fees. Each private action is a flat 4 STRK.</p>
-        <Btn onClick={connect} disabled={s.connected} icon={<Wallet size={16} />} primary>{s.connected ? "Connected \u00b7 0x04a9\u2026c1e2" : "Connect Ready wallet"}</Btn>
+        <p style={{ fontSize: 13, color: faded, margin: "0 0 16px" }}>
+          {live
+            ? "A Ready wallet on Starknet mainnet, with STRK for fees. Each private action is a flat 4 STRK, paid by the connected wallet."
+            : "Demo mode: no wallet needed, nothing touches mainnet."}
+        </p>
+        <Btn onClick={connect} disabled={s.connected || s.busy === "connect"} icon={s.busy === "connect" ? <Loader2 size={16} className="spin" /> : <Wallet size={16} />} primary>
+          {s.connected
+            ? (live && s.account ? `Connected · ${s.account.address.slice(0, 6)}…${s.account.address.slice(-4)}` : "Connected (demo)")
+            : (s.busy === "connect" ? "Connecting…" : live ? "Connect Ready wallet" : "Connect (demo)")}
+        </Btn>
       </Panel>
 
       {/* the right */}
@@ -82,11 +285,17 @@ export default function SoleDemo() {
       {/* actors */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <Actor who="Bank A" role="acquires and finances the right">
-          <Btn onClick={claimA} disabled={s.state !== "UNCLAIMED" || !s.connected} icon={<ShieldCheck size={16} />} primary>Shield, claim &amp; finance</Btn>
-          <Btn onClick={settle} disabled={s.state !== "ACTIVE" || s.holder !== "A"} icon={<CheckCircle2 size={16} />}>Settle &amp; consume</Btn>
+          <Btn onClick={claimA} disabled={s.state !== "UNCLAIMED" || !s.connected || !!s.busy} icon={s.busy === "claimA" || s.busy === "financeA" ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />} primary>
+            {s.busy === "claimA" ? "Claiming…" : s.busy === "financeA" ? "Financing…" : "Shield, claim & finance"}
+          </Btn>
+          <Btn onClick={settle} disabled={s.state !== "ACTIVE" || s.holder !== "A" || !!s.busy} icon={s.busy === "settle" ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}>
+            {s.busy === "settle" ? "Settling…" : "Settle & consume"}
+          </Btn>
         </Actor>
         <Actor who="Bank B" role="attempts the same right">
-          <Btn onClick={claimB} disabled={s.state !== "ACTIVE"} icon={<Ban size={16} />} danger>Attempt duplicate claim</Btn>
+          <Btn onClick={claimB} disabled={s.state !== "ACTIVE" || !!s.busy} icon={s.busy === "claimB" ? <Loader2 size={16} className="spin" /> : <Ban size={16} />} danger>
+            {s.busy === "claimB" ? "Attempting…" : "Attempt duplicate claim"}
+          </Btn>
           <p style={{ fontSize: 13, color: faded, marginTop: 4 }}>Only possible once A holds the right. The chain, not a database, refuses it — and learns nothing about A.</p>
         </Actor>
       </div>
@@ -96,7 +305,9 @@ export default function SoleDemo() {
         <div style={{ border: `1px solid ${rule}`, background: parch2, padding: 24, marginTop: 18 }}>
           <h3 style={{ fontSize: 19, margin: "0 0 4px" }}>A different venue, later</h3>
           <p style={{ fontSize: 13, color: faded, margin: "0 0 14px" }}>The right is consumed. Another lender, at another market that shares no ledger with the first, tries to finance the same underlying right. Single-use is global — refused here too, and this venue never learns who financed it first.</p>
-          <Btn onClick={venue2} disabled={s.venue2} icon={<Ban size={16} />} danger>Finance at a second venue</Btn>
+          <Btn onClick={venue2} disabled={s.venue2 || !!s.busy} icon={s.busy === "venue2" ? <Loader2 size={16} className="spin" /> : <Ban size={16} />} danger>
+            {s.busy === "venue2" ? "Attempting…" : "Finance at a second venue"}
+          </Btn>
           {s.venue2 && <p style={{ fontSize: 13, color: claret, marginTop: 10, fontFamily: "ui-monospace,Menlo,monospace" }}>reverted at venue 2: AUTH_RIGHT_NOT_ACTIVE · holder still hidden</p>}
         </div>
       )}
@@ -109,7 +320,7 @@ export default function SoleDemo() {
         <p style={{ fontSize: 13, color: faded, marginBottom: 14 }}>Same underlying private state, four scoped projections.</p>
         <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
           {["public", "holder", "counterparty", "auditor"].map((v) => (
-            <button key={v} onClick={() => setS((p) => ({ ...p, view: v }))} style={{
+            <button key={v} onClick={() => set({ view: v })} style={{
               border: `1px solid ${s.view === v ? claret : rule}`, background: s.view === v ? claret : "transparent",
               color: s.view === v ? parch : ink, padding: "7px 14px", cursor: "pointer", fontFamily: "inherit",
               fontSize: 14, textTransform: "capitalize", borderRadius: 2 }}>{v}</button>
@@ -124,8 +335,8 @@ export default function SoleDemo() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Landmark size={17} color={faded} /><span style={{ fontSize: 14, color: faded }}>Transition log</span></div>
           <button onClick={reset} style={{ border: "none", background: "none", color: claret, cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>Reset</button>
         </div>
-        <div style={{ background: "#e2d9c2", border: `1px solid ${rule}`, padding: 14, minHeight: 64, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, color: "#4a4436", lineHeight: 1.7 }}>
-          {s.log.length === 0 ? <span style={{ color: faded }}>No transitions yet. Connect, then let Bank A claim.</span> : s.log.map((l, i) => <div key={i}>{"\u203a "}{l}</div>)}
+        <div style={{ background: "#e2d9c2", border: `1px solid ${rule}`, padding: 14, minHeight: 64, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, color: "#4a4436", lineHeight: 1.7, wordBreak: "break-all" }}>
+          {s.log.length === 0 ? <span style={{ color: faded }}>No transitions yet. Connect, then let Bank A claim.</span> : s.log.map((l, i) => <div key={i}>{"› "}{l}</div>)}
         </div>
       </section>
     </main>
@@ -157,7 +368,7 @@ function Btn({ children, onClick, disabled, icon, primary, danger }) {
 function Projection({ view, state, holder }) {
   const rows = {
     public: [["Right state", state, true], ["Slot identifier", "queryable with canonical id", true], ["Claimant", "hidden", false], ["Funding amount", "hidden", false], ["Counterparty", "hidden", false]],
-    holder: [["Right state", state, true], ["This is my claim", holder ? "yes" : "\u2014", true], ["Funding amount", "known to me", true], ["Settlement", state === "CONSUMED" ? "settled" : "open", true]],
+    holder: [["Right state", state, true], ["This is my claim", holder ? "yes" : "—", true], ["Funding amount", "known to me", true], ["Settlement", state === "CONSUMED" ? "settled" : "open", true]],
     counterparty: [["Obligation satisfied", state === "CONSUMED" ? "yes" : "not yet", true], ["Claimant identity", "hidden", false], ["Funding amount", "hidden", false]],
     auditor: [["Canonical right", "RCV-4821", true], ["Lifecycle", "registered -> active -> consumed", true], ["Claimant", "disclosed under scoped key", true], ["Funding note", "disclosed under scoped key", true], ["Timestamps", "disclosed under scoped key", true]],
   }[view];
