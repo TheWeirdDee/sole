@@ -51,6 +51,23 @@ and:
     counterparty       not in public registry state
 ```
 
+## What only Sole enforces
+
+Preventing a bad fill inside one settlement is a solved thing: a market can check the amount and roll its own transaction back. That guarantee lives inside a single deal, at a single venue, in a single moment.
+
+Sole's guarantee is different in kind. A right, once consumed, is spent **everywhere** — for every venue, every lender, every future moment — and no venue that refuses it learns who held it first. Two lenders who have never met, at two markets that do not share a ledger, cannot both finance the same underlying right. The first financing consumes it; the second is refused on-chain, at a different venue, with the holder still hidden.
+
+```
+right R  --financed at venue 1-->  CONSUMED (global)
+                                       |
+   later, venue 2, a different lender  |
+                     finance(R)  ------+--->  REVERT: right is spent
+                                              (venue 2 learns only that R is taken,
+                                               never who took it)
+```
+
+That is the property a per-settlement rollback cannot reach: single-use across parties and venues that do not trust or observe each other, with ownership private throughout. It is the reason Sole is a rail and not a check that belongs inside one market.
+
 ## The privacy boundary
 
 Stated honestly, because a vague privacy claim is worse than none.
@@ -71,9 +88,21 @@ Stated honestly, because a vague privacy claim is worse than none.
 ## Why STRK20 is causally necessary, not decorative
 
 ```
-Without STRK20:  Bank A -> public wallet -> public funding -> public relationship
-With STRK20:     Bank A -> shielded funding -> private transfer -> anonymizer -> claim() -> public ACTIVE state
+canonical right
+   | claim (private, via anonymizer)          Bank B: same right
+   v                                             | claim()
+RightsRegistry -- mints --> ExecAuth (single-use) v
+   |                              |            REVERT RIGHT_ALREADY_ACTIVE
+   | shielded funding             v            (no auth -> venue never runs)
+   v                     ExecutionAdapter.finance()  [gated: right must be ACTIVE]
+   |                              |
+   |                              v
+   |                        money market executes (Vesu, or FallbackMarket)
+   v                              |
+settle_and_repay <---- repay + consume auth ----+   -> right CONSUMED
 ```
+
+STRK20 provides the private money; the money market provides the liquidity; **Sole provides the scarce, single-use execution right** that gates the market. Three separate primitives. The venue is causally downstream of Sole: Bank B's duplicate claim reverts before any authorization exists, so the market is never called. Remove the anonymizer and the claiming wallet leaks onto the public transition; remove Sole and the market can finance the same right twice.
 
 Remove the anonymizer and the claiming wallet becomes `msg.sender` on the public transition, linking a real identity to the right and defeating the thesis. The nullifier that consumes a claim is STRK20's own double-spend primitive, reused for consumption semantics rather than reinvented. Integration depth: shielded notes, private transfer, anonymizer boundary, nullifier, scoped viewing keys, the SDK, and a custom Cairo state machine.
 
@@ -121,7 +150,7 @@ Live on Starknet mainnet (`FILL` after deploy). This is a thesis-MVP: it ships `
 
 1. **First-registration-wins does not prove a real-world receivable exists.** It enforces exclusivity over the commitment. Establishing that a canonical id maps to a legitimate real right is the job of an *attested root*, deferred to production (see THREAT_MODEL T-1, DECISIONS D-006).
 2. **Anyone with the canonical id can read a right's lifecycle state.** By design — the enforcement state is public. Low-entropy ids narrow this; the economic relationship stays private regardless.
-3. **The claim/settle compute runs through the pool's privacy path, which the browser wallet cannot fully express today** — the same constraint Limen documented. The demo binds the user-facing actions to the wallet and routes the compute leg accordingly.
+3. **The claim/settle compute runs through the pool's privacy path, which the browser wallet cannot fully express today.** The demo binds the user-facing actions to the wallet and routes the compute leg accordingly.
 4. **Not audited.** The invariant is covered adversarially; that is not an audit. Contracts are ownerless with no upgrade path, so a finding means a redeploy, not a patch.
 5. **Extensions not shipped:** EXPIRED, CANCELLED, PARTIALLY_SETTLED. Documented in STATE_MACHINE, deliberately not implemented before the core is proven on mainnet.
 
