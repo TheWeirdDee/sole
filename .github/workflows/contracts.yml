@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: software-mansion/setup-scarb@v1
         with:
-          scarb-version: "2.20.1"
+          scarb-version: "2.20.0"
           scarb-lock: contracts/Scarb.lock
       - uses: foundry-rs/setup-snfoundry@v4
         with:
