@@ -17,13 +17,13 @@
 
 use snforge_std::{declare, ContractClassTrait, DeclareResultTrait, start_cheat_caller_address,
     stop_cheat_caller_address};
-use starknet::{ContractAddress, contract_address_const};
+use starknet::ContractAddress;
 use sole_contracts::rights_registry::{
     IRightsRegistryDispatcher, IRightsRegistryDispatcherTrait, RightState,
 };
 
-fn ANON() -> ContractAddress { contract_address_const::<'anonymizer'>() }
-fn STRANGER() -> ContractAddress { contract_address_const::<'stranger'>() }
+fn ANON() -> ContractAddress { 'anonymizer'.try_into().unwrap() }
+fn STRANGER() -> ContractAddress { 'stranger'.try_into().unwrap() }
 
 fn deploy() -> IRightsRegistryDispatcher {
     let contract = declare("RightsRegistry").unwrap().contract_class();

@@ -23,6 +23,7 @@ dist/
 
 # cairo / scarb
 contracts/target/
+contracts/.snfoundry_cache/
 
 # agent skills (local dev tooling, reinstall with `npx skills add welttowelt/strk20-skills`)
 .agents/
