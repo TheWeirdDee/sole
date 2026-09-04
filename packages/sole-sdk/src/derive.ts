@@ -27,6 +27,7 @@ import { hash, shortString } from "starknet";
 export const TAG_SLOT = shortString.encodeShortString("sole:slot");
 export const TAG_CLAIM = shortString.encodeShortString("sole:claim");
 export const TAG_NULL = shortString.encodeShortString("sole:nullifier");
+export const TAG_EXEC = shortString.encodeShortString("sole:exec");
 
 export type Felt = string;
 
@@ -47,6 +48,14 @@ export function deriveClaimCommitment(
 /** Consumption marker. Requires the holder's secret, so only they can settle. */
 export function deriveNullifier(claimantSecret: Felt, slotKey: Felt): Felt {
   return hash.computePoseidonHashOnElements([TAG_NULL, claimantSecret, slotKey]);
+}
+
+/** Single-use execution-auth nonce that binds a venue action to this claim.
+ *  nonce = Poseidon(TAG_EXEC, slot_key, claim_commitment). The adapter also
+ *  independently checks Sole says the right is ACTIVE, so a leaked nonce alone
+ *  authorizes nothing. */
+export function deriveExecNonce(slotKey: Felt, claimCommitment: Felt): Felt {
+  return hash.computePoseidonHashOnElements([TAG_EXEC, slotKey, claimCommitment]);
 }
 
 /**
