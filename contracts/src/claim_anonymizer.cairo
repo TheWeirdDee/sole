@@ -26,12 +26,23 @@
 // docs/INTEGRATING.md for the exact privacy_invoke wiring and the SDK path.
 
 use starknet::ContractAddress;
+use sole_contracts::execution_adapter::ExecAuth;
 
 #[starknet::interface]
 pub trait IClaimAnonymizer<TContractState> {
     fn register(ref self: TContractState, slot_key: felt252);
     fn claim_through(ref self: TContractState, slot_key: felt252, claim_commitment: felt252);
     fn settle_through(ref self: TContractState, slot_key: felt252, nullifier: felt252);
+    /// Drive one financing action against the venue. Only reaches the adapter
+    /// because the pool proved a shielded funding note (privacy_invoke). The
+    /// adapter itself re-checks that Sole says the right is ACTIVE.
+    fn finance_through(
+        ref self: TContractState, adapter: ContractAddress, auth: ExecAuth, amount_commitment: felt252,
+    );
+    /// Settle: repay the venue position and consume the Sole right atomically.
+    fn settle_and_repay(
+        ref self: TContractState, adapter: ContractAddress, slot_key: felt252, nullifier: felt252, auth: ExecAuth,
+    );
     fn registry(self: @TContractState) -> ContractAddress;
     fn pool(self: @TContractState) -> ContractAddress;
 }
@@ -43,6 +54,9 @@ pub mod ClaimAnonymizer {
     use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
     use sole_contracts::rights_registry::{
         IRightsRegistryDispatcher, IRightsRegistryDispatcherTrait,
+    };
+    use sole_contracts::execution_adapter::{
+        IExecutionAdapterDispatcher, IExecutionAdapterDispatcherTrait, ExecAuth,
     };
 
     #[storage]
@@ -92,6 +106,22 @@ pub mod ClaimAnonymizer {
         // Settlement consumes the private claim -> also via privacy_invoke.
         fn settle_through(ref self: ContractState, slot_key: felt252, nullifier: felt252) {
             self.assert_pool();
+            self.reg().settle(slot_key, nullifier);
+        }
+
+        fn finance_through(
+            ref self: ContractState, adapter: ContractAddress, auth: ExecAuth, amount_commitment: felt252,
+        ) {
+            self.assert_pool();
+            IExecutionAdapterDispatcher { contract_address: adapter }.finance(auth, amount_commitment);
+        }
+
+        fn settle_and_repay(
+            ref self: ContractState, adapter: ContractAddress, slot_key: felt252, nullifier: felt252, auth: ExecAuth,
+        ) {
+            self.assert_pool();
+            // repay the venue first, then consume the right - both or neither.
+            IExecutionAdapterDispatcher { contract_address: adapter }.settle(auth);
             self.reg().settle(slot_key, nullifier);
         }
 
