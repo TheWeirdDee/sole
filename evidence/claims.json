@@ -35,6 +35,16 @@
       "id": "C-7",
       "claim": "a consumed right is refused at a DIFFERENT venue too; single-use is global to the right, not local to one settlement",
       "evidence": "tests/adversarial: second_venue_refuses_a_consumed_right + mainnet cross-venue rejection tx"
+    },
+    {
+      "id": "C-8",
+      "claim": "an execution auth is bound to the real on-chain claim commitment, not a caller-supplied value - a tampered or guessed nonce is refused",
+      "evidence": "tests/adversarial/test_venue_gating.cairo: venue_rejects_a_tampered_nonce"
+    },
+    {
+      "id": "C-9",
+      "claim": "a right can be financed at most once while ACTIVE, tracked per right rather than per auth nonce",
+      "evidence": "tests/adversarial/test_venue_gating.cairo: venue_refuses_to_finance_the_same_active_right_twice"
     }
   ],
   "transactions": []
