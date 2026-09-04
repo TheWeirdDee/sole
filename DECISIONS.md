@@ -44,3 +44,11 @@ Each: context, decision, alternatives, why rejected, security consequence, produ
 ## D-008 — ACTIVE is publicly queryable
 **Decision.** State is public; only the economic relationship is private.
 **Why.** This is the honest, defensible thesis. "The existence of the right is invisible" would be false given D-002.
+
+## D-009 — Venue is downstream of Sole, behind a swappable adapter
+**Context.** A registry that only prevents a duplicate has no economic consequence. The right should authorize a real financial action, not merely record a status. But building a lending market inside Sole would make the protocol do too much and bury the primitive.
+**Decision.** Sole authorizes a financing action against an external money market through an `ExecutionAdapter`. The venue call is gated by Sole's ACTIVE state — it cannot execute unless Sole minted the right, and it is consumed at settlement. Two implementations behind one interface: `VesuAdapter` (real Starknet lender) and `FallbackMarket` (minimal in-repo vault).
+**Alternatives.** (a) Self-contained settlement inside Sole — safer, but Sole "does too much" and the economic consequence is weaker. (b) Build a full lending market inside Sole — the primitive disappears behind an application.
+**Security consequence.** The venue is causally downstream: Bank B's duplicate claim reverts at Sole, so no authorization is minted and the market never runs. Sole stays the protagonist; the market is infrastructure it unlocks.
+**Production implication.** Any right-gated execution venue plugs in behind the adapter. The receivable/Vesu pairing is the first consumer, not the protocol.
+**Risk accepted.** External venue integration in a tight window; mitigated by shipping `FallbackMarket` as the guaranteed mainnet loop with an identical Sole authorization path.
