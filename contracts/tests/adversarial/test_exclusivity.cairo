@@ -24,14 +24,15 @@ use sole_contracts::rights_registry::{
 
 fn ANON() -> ContractAddress { 'anonymizer'.try_into().unwrap() }
 fn STRANGER() -> ContractAddress { 'stranger'.try_into().unwrap() }
+fn DEPLOYER() -> ContractAddress { 'deployer'.try_into().unwrap() }
 
 fn deploy() -> IRightsRegistryDispatcher {
     let contract = declare("RightsRegistry").unwrap().contract_class();
-    let (addr, _) = contract.deploy(@array![]).unwrap();
+    let (addr, _) = contract.deploy(@array![DEPLOYER().into()]).unwrap();
     let reg = IRightsRegistryDispatcher { contract_address: addr };
-    // Same (default) caller as the deploy() above, so it matches the
-    // deployer initialize_anonymizer checks against.
+    start_cheat_caller_address(reg.contract_address, DEPLOYER());
     reg.initialize_anonymizer(ANON());
+    stop_cheat_caller_address(reg.contract_address);
     reg
 }
 
@@ -167,7 +168,7 @@ fn initialize_anonymizer_by_non_deployer_reverts() {
     // registry/anonymizer constructor cycle, and is only safe if nobody but
     // the deployer can win the race to call it first.
     let contract = declare("RightsRegistry").unwrap().contract_class();
-    let (addr, _) = contract.deploy(@array![]).unwrap();
+    let (addr, _) = contract.deploy(@array![DEPLOYER().into()]).unwrap();
     let reg = IRightsRegistryDispatcher { contract_address: addr };
     start_cheat_caller_address(reg.contract_address, STRANGER());
     reg.initialize_anonymizer(ANON());
@@ -177,5 +178,6 @@ fn initialize_anonymizer_by_non_deployer_reverts() {
 #[should_panic(expected: 'ANONYMIZER_ALREADY_SET')]
 fn initialize_anonymizer_twice_reverts() {
     let r = deploy(); // already initialized once, by deploy()'s own caller
+    start_cheat_caller_address(r.contract_address, DEPLOYER());
     r.initialize_anonymizer(STRANGER());
 }

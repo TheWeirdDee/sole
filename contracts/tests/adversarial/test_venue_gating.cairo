@@ -18,12 +18,15 @@ use sole_contracts::execution_adapter::{
 };
 
 fn ANON() -> ContractAddress { 'anonymizer'.try_into().unwrap() }
+fn DEPLOYER() -> ContractAddress { 'deployer'.try_into().unwrap() }
 
 fn deploy() -> (IRightsRegistryDispatcher, IExecutionAdapterDispatcher) {
     let reg_c = declare("RightsRegistry").unwrap().contract_class();
-    let (reg_addr, _) = reg_c.deploy(@array![]).unwrap();
+    let (reg_addr, _) = reg_c.deploy(@array![DEPLOYER().into()]).unwrap();
     let reg = IRightsRegistryDispatcher { contract_address: reg_addr };
+    start_cheat_caller_address(reg.contract_address, DEPLOYER());
     reg.initialize_anonymizer(ANON());
+    stop_cheat_caller_address(reg.contract_address);
     let mkt_c = declare("FallbackMarket").unwrap().contract_class();
     let (mkt_addr, _) = mkt_c.deploy(@array![reg_addr.into(), ANON().into()]).unwrap();
     (reg, IExecutionAdapterDispatcher { contract_address: mkt_addr })
@@ -96,9 +99,11 @@ fn venue_refuses_after_consumption() {
 #[should_panic(expected: 'AUTH_RIGHT_NOT_ACTIVE')]
 fn second_venue_refuses_a_consumed_right() {
     let reg_c = declare("RightsRegistry").unwrap().contract_class();
-    let (reg_addr, _) = reg_c.deploy(@array![]).unwrap();
+    let (reg_addr, _) = reg_c.deploy(@array![DEPLOYER().into()]).unwrap();
     let reg = IRightsRegistryDispatcher { contract_address: reg_addr };
+    start_cheat_caller_address(reg.contract_address, DEPLOYER());
     reg.initialize_anonymizer(ANON());
+    stop_cheat_caller_address(reg.contract_address);
     let mkt_c = declare("FallbackMarket").unwrap().contract_class();
     let (mkt1_addr, _) = mkt_c.deploy(@array![reg_addr.into(), ANON().into()]).unwrap();
     let (mkt2_addr, _) = mkt_c.deploy(@array![reg_addr.into(), ANON().into()]).unwrap(); // second venue

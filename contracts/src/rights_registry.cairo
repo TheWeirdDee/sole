@@ -127,8 +127,12 @@ pub mod RightsRegistry {
     }
 
     #[constructor]
-    fn constructor(ref self: ContractState) {
-        self.deployer.write(get_caller_address());
+    fn constructor(ref self: ContractState, deployer: ContractAddress) {
+        // Explicit, not get_caller_address(): a deploy routed through the
+        // Universal Deployer Contract makes the constructor's caller the UDC,
+        // not the account that submitted the transaction. The deployer must
+        // pass their own address deliberately.
+        self.deployer.write(deployer);
     }
 
     #[generate_trait]
