@@ -9,7 +9,7 @@
 
 import { Account, Contract, RpcProvider } from "starknet";
 import {
-  canonicalAssetId, deriveClaimCommitment, deriveNullifier, deriveSlotKey, Felt,
+  canonicalAssetId, deriveClaimCommitment, deriveNullifier, deriveExecNonce, deriveSlotKey, Felt,
 } from "./derive";
 
 export enum RightState {
@@ -22,6 +22,7 @@ export interface SoleAddresses {
   registry: string;
   anonymizer: string;
   pool: string; // STRK20 privacy pool
+  adapter: string; // ExecutionAdapter (Vesu or FallbackMarket)
 }
 
 // What a given viewer is permitted to learn. The registry only ever holds the
@@ -85,6 +86,28 @@ export class SoleClient {
     const slotKey = this.slotKeyFor(reference);
     const nullifier = deriveNullifier(claimantSecret, slotKey);
     return this.privacyInvoke(account, "settle_through", [slotKey, nullifier]);
+  }
+
+  /** Authorize + execute one financing action against the venue. Only runs
+   *  because A holds an ACTIVE right; the adapter re-checks Sole's state. */
+  async finance(
+    account: Account, reference: string, claimCommitment: Felt, amountCommitment: Felt,
+  ): Promise<string> {
+    const slotKey = this.slotKeyFor(reference);
+    const nonce = deriveExecNonce(slotKey, claimCommitment);
+    return this.privacyInvoke(account, "finance_through",
+      [this.addrs.adapter, slotKey, nonce, amountCommitment]);
+  }
+
+  /** Settle: repay the venue position and consume the right, atomically. */
+  async settleAndRepay(
+    account: Account, reference: string, claimantSecret: Felt, claimCommitment: Felt,
+  ): Promise<string> {
+    const slotKey = this.slotKeyFor(reference);
+    const nullifier = deriveNullifier(claimantSecret, slotKey);
+    const nonce = deriveExecNonce(slotKey, claimCommitment);
+    return this.privacyInvoke(account, "settle_and_repay",
+      [this.addrs.adapter, slotKey, nullifier, slotKey, nonce]);
   }
 
   // ----- scoped disclosure projections -----
