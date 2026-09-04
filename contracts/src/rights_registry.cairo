@@ -29,6 +29,18 @@ pub enum RightState {
 
 #[starknet::interface]
 pub trait IRightsRegistry<TContractState> {
+    /// One-time wiring to the ClaimAnonymizer, callable only by whoever
+    /// deployed this registry. Exists because RightsRegistry and
+    /// ClaimAnonymizer each need the other's address in their constructor -
+    /// a cycle no address precomputation can resolve (each address's
+    /// computation would need the other as an input). The deployer deploys
+    /// this registry first, then the anonymizer with the registry's now-real
+    /// address, then calls this once. Reverts on a second call, so the
+    /// window in which the registry has no anonymizer is the only window
+    /// this can be set - after that it is exactly as immutable as if it had
+    /// been a constructor argument.
+    fn initialize_anonymizer(ref self: TContractState, anonymizer: ContractAddress);
+
     /// Register a canonical right. Idempotent per slot_key at the UNCLAIMED
     /// boundary: the first registration wins; a second registration of a
     /// slot that already exists reverts. `slot_key` is derived off-chain as
@@ -60,6 +72,7 @@ pub trait IRightsRegistry<TContractState> {
 #[starknet::contract]
 pub mod RightsRegistry {
     use super::{IRightsRegistry, RightState};
+    use core::num::traits::Zero;
     use starknet::{ContractAddress, get_caller_address};
     use starknet::storage::{
         Map, StoragePointerReadAccess, StoragePointerWriteAccess,
@@ -79,6 +92,9 @@ pub mod RightsRegistry {
         // only the anonymizer may drive transitions, so the raw claiming
         // wallet is never the msg.sender the registry records.
         anonymizer: ContractAddress,
+        // who deployed this registry - the only address initialize_anonymizer
+        // will accept a call from. Set once at construction, read-only after.
+        deployer: ContractAddress,
     }
 
     #[event]
@@ -106,11 +122,13 @@ pub mod RightsRegistry {
         pub const NOT_ACTIVE: felt252 = 'RIGHT_NOT_ACTIVE';
         pub const NULLIFIER_SPENT: felt252 = 'NULLIFIER_ALREADY_SPENT';
         pub const ZERO_COMMITMENT: felt252 = 'ZERO_COMMITMENT';
+        pub const NOT_DEPLOYER: felt252 = 'CALLER_NOT_DEPLOYER';
+        pub const ALREADY_INITIALIZED: felt252 = 'ANONYMIZER_ALREADY_SET';
     }
 
     #[constructor]
-    fn constructor(ref self: ContractState, anonymizer: ContractAddress) {
-        self.anonymizer.write(anonymizer);
+    fn constructor(ref self: ContractState) {
+        self.deployer.write(get_caller_address());
     }
 
     #[generate_trait]
@@ -122,6 +140,12 @@ pub mod RightsRegistry {
 
     #[abi(embed_v0)]
     impl RightsRegistryImpl of IRightsRegistry<ContractState> {
+        fn initialize_anonymizer(ref self: ContractState, anonymizer: ContractAddress) {
+            assert(get_caller_address() == self.deployer.read(), Errors::NOT_DEPLOYER);
+            assert(self.anonymizer.read().is_zero(), Errors::ALREADY_INITIALIZED);
+            self.anonymizer.write(anonymizer);
+        }
+
         fn register_right(ref self: ContractState, slot_key: felt252) {
             self.assert_anonymizer();
             assert(!self.registered.read(slot_key), Errors::ALREADY_REGISTERED);
