@@ -24,7 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <footer style={{ borderTop: "1px solid var(--rule)", padding: "34px 0",
           color: "var(--faded)", fontSize: 14, marginTop: 20 }}>
           <div style={{ maxWidth: 1000, margin: "0 auto", padding: "0 26px" }}>
-            Sole · a privacy-preserving exclusivity protocol for economic rights on STRK20 · Apache-2.0
+            Sole · a single-use execution-right protocol for economic rights on STRK20 · Apache-2.0
             <div style={{ fontSize: 12, marginTop: 8 }}>
               Demo fixture data is labelled as fixture. The registry is use-case agnostic.
             </div>
