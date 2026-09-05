@@ -23,7 +23,7 @@ settle_and_repay  <-- repay + spend auth --+   -> right CONSUMED (global)
                                                   (venue learns only that it is taken)
 ```
 
-Live demo: pending · Demo video: pending · Mainnet manifest: [`strk20.json`](./strk20.json)
+Live demo: [sole-web-app.vercel.app](https://sole-web-app.vercel.app/) · Demo video: pending · Mainnet manifest: [`strk20.json`](./strk20.json)
 
 ## Mainnet deployments
 
