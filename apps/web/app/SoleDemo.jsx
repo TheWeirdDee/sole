@@ -258,9 +258,16 @@ export default function SoleDemo() {
         <h3 style={{ fontSize: 19, margin: "0 0 6px" }}>Connect a wallet</h3>
         <p style={{ fontSize: 13, color: faded, margin: "0 0 16px" }}>
           {live
-            ? "A Ready wallet on Starknet mainnet, with STRK for fees. Each private action is a flat 4 STRK, paid by the connected wallet."
+            ? "A Ready wallet on Starknet mainnet, with STRK for fees. Each private action pays the STRK20 pool's flat fee, read live from the pool."
             : "Demo mode: no wallet needed, nothing touches mainnet."}
         </p>
+        {live && (
+          <p style={{ fontSize: 12.5, color: claret, margin: "0 0 16px", lineHeight: 1.5 }}>
+            First time using STRK20 with this wallet? In Ready, complete <strong>"Enable private tokens"</strong> on
+            the main wallet view (not Settings → Smart Account, a different, unrelated toggle) before continuing -
+            it registers a viewing key with the pool. Every private action reverts with <code style={{ background: "#e9d6d3", padding: "1px 5px" }}>NOT_REGISTERED</code> until this is done once.
+          </p>
+        )}
         <Btn onClick={connect} disabled={s.connected || s.busy === "connect"} icon={s.busy === "connect" ? <Loader2 size={16} className="spin" /> : <Wallet size={16} />} primary>
           {s.connected
             ? (live && s.account ? `Connected · ${s.account.address.slice(0, 6)}…${s.account.address.slice(-4)}` : "Connected (demo)")

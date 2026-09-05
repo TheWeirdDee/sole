@@ -62,12 +62,13 @@ const toFelt = (n: number | bigint): Felt => "0x" + n.toString(16);
 // invoke action with a real value-moving action (withdraw/deposit/transfer)
 // in the same STRK20 transaction; none show invoke used completely alone.
 // A bare invoke-only actions array is rejected by the wallet as
-// INVALID_REQUEST_PAYLOAD before it ever reaches proving. This deposits the
-// flat per-action fee (see SETUP.md/README) from the caller's own public
-// balance into their own private balance - never sent elsewhere, and rolled
-// back atomically with the rest of the transaction if the invoke reverts.
+// INVALID_REQUEST_PAYLOAD before it ever reaches proving. This deposits
+// 2x the pool's current flat fee (see getFeeAmount/privacyActionDeposit -
+// never hardcoded, it's admin-settable and has changed once already) from
+// the caller's own public balance into their own private balance - never
+// sent elsewhere, and rolled back atomically with the rest of the
+// transaction if the invoke reverts.
 const STRK_MAINNET: Felt = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
-const PRIVACY_ACTION_FEE: Felt = "0x3782dace9d900000"; // 4 STRK (18 decimals)
 
 // Wallet API error code for "account has no viewing key registered with the
 // STRK20 pool yet" (@starknet-io/starknet-types-0104 wallet-api/errors.d.ts).
@@ -107,6 +108,12 @@ export class SoleClient {
   private provider: RpcProvider;
   private addrs: SoleAddresses;
   private registryAbi: any;
+  // Cached result of the pool's get_fee_amount() - fetched live, never
+  // hardcoded (SKILL.md warns the flat fee has already changed since it was
+  // first documented: 4 STRK when written, 6 STRK as verified on mainnet
+  // here). Cached per client instance since it only changes via an admin
+  // set_fee_amount call, not per transaction.
+  private feeAmount: bigint | null = null;
 
   constructor(provider: RpcProvider, addrs: SoleAddresses, registryAbi: any) {
     this.provider = provider;
@@ -118,6 +125,28 @@ export class SoleClient {
     return new Contract({
       abi: this.registryAbi, address: this.addrs.registry, providerOrAccount: this.provider,
     });
+  }
+
+  /** The pool's current flat per-action fee, read live (never hardcoded -
+   *  it's admin-settable and has already changed once since first
+   *  documented). Cached after the first call. */
+  private async getFeeAmount(): Promise<bigint> {
+    if (this.feeAmount !== null) return this.feeAmount;
+    const cls: any = await this.provider.getClassAt(this.addrs.pool);
+    const pool = new Contract({ abi: cls.abi, address: this.addrs.pool, providerOrAccount: this.provider });
+    const fee: bigint = await pool.get_fee_amount();
+    this.feeAmount = fee;
+    return fee;
+  }
+
+  /** How much a privacy_invoke's companion deposit should move: comfortably
+   *  more than the current fee (2x), so the action clears the fee with
+   *  margin even if it changes between this read and execution, rather than
+   *  landing exactly on it and depending on the wallet crediting the deposit
+   *  before checking fee affordability. */
+  private async privacyActionDeposit(): Promise<Felt> {
+    const fee = await this.getFeeAmount();
+    return toFelt(fee * 2n);
   }
 
   // ----- identity -----
@@ -206,9 +235,10 @@ export class SoleClient {
    * every documented anonymizer helper (Swap, Vesu, Escrow) pairs invoke with
    * a withdraw/deposit/transfer, and a bare invoke-only actions array is
    * rejected by the wallet as INVALID_REQUEST_PAYLOAD before it ever reaches
-   * proving. A `deposit` of the flat per-action fee into the caller's own
-   * private balance satisfies that without moving value anywhere but back to
-   * them, and rolls back atomically if the invoke reverts. The wallet proves
+   * proving. A `deposit` of 2x the pool's current fee (read live via
+   * getFeeAmount, never hardcoded) into the caller's own private balance
+   * satisfies that without moving value anywhere but back to them - and
+   * rolls back atomically if the invoke reverts. The wallet proves
    * a shielded funding note in ZK before dispatching, so the anonymizer - not
    * the raw wallet - is the caller the registry records (docs/INTEGRATING.md,
    * strk20-wallet-api/private-defi).
@@ -228,8 +258,9 @@ export class SoleClient {
       normalizeFelt(args.authNonce ?? ZERO),
       normalizeFelt(args.amountCommitment ?? ZERO),
     ];
+    const depositAmount = await this.privacyActionDeposit();
     const actions: Parameters<SoleAccount["strk20InvokeTransaction"]>[0] = [
-      { type: "deposit", token: normalizeFelt(STRK_MAINNET), amount: PRIVACY_ACTION_FEE },
+      { type: "deposit", token: normalizeFelt(STRK_MAINNET), amount: depositAmount },
       { type: "invoke", contract: normalizeFelt(this.addrs.anonymizer), calldata },
     ];
     try {
@@ -245,7 +276,7 @@ export class SoleClient {
       // on-chain, retry the original action.
       console.info("[sole-sdk] account not yet registered with the STRK20 pool - registering via a standalone deposit, then retrying");
       const { transaction_hash: registerTx } = await account.strk20InvokeTransaction([
-        { type: "deposit", token: normalizeFelt(STRK_MAINNET), amount: PRIVACY_ACTION_FEE },
+        { type: "deposit", token: normalizeFelt(STRK_MAINNET), amount: depositAmount },
       ]);
       await this.provider.waitForTransaction(registerTx);
       const { transaction_hash } = await account.strk20InvokeTransaction(actions);
