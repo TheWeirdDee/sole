@@ -19,6 +19,18 @@ const steps = ["Connect", "Register", "A claims", "A finances", "B refused", "Se
 
 function freshReference() { return "RCV-4821-" + Date.now().toString(36); }
 
+/** Wallet/RPC errors often carry more detail in .code/.data than .message
+ *  alone shows - surface all of it so a failure is diagnosable from the log
+ *  instead of a bare "An error occurred (X)". */
+function describeError(e) {
+  const parts = [e?.message ?? String(e)];
+  if (e?.code !== undefined) parts.push(`code=${e.code}`);
+  if (e?.data !== undefined) {
+    try { parts.push(`data=${JSON.stringify(e.data)}`); } catch { parts.push(`data=${e.data}`); }
+  }
+  return parts.join(" · ");
+}
+
 function initialState(mode) {
   return {
     // Stable across server and client renders (Date.now() is not - it would
@@ -54,7 +66,7 @@ export default function SoleDemo() {
     try {
       txHash = await submit();
     } catch (e) {
-      push(`${label}: submission failed - ${e?.message ?? e}`);
+      push(`${label}: submission failed - ${describeError(e)}`);
       throw e;
     }
     push(`${label}: submitted ${txHash} (pending) -> ${voyagerTxUrl(txHash)}`);
@@ -92,7 +104,7 @@ export default function SoleDemo() {
       if (!reverted) push("state_of() reads UNCLAIMED");
       else set({ error: reason });
     } catch (e) {
-      set({ busy: null, error: e?.message ?? String(e) });
+      set({ busy: null, error: describeError(e) });
     }
   };
 
@@ -130,7 +142,7 @@ export default function SoleDemo() {
       set({ busy: null });
       if (reverted) set({ error: reason });
     } catch (e) {
-      set({ busy: null, error: e?.message ?? String(e) });
+      set({ busy: null, error: describeError(e) });
     }
   };
 
@@ -155,7 +167,7 @@ export default function SoleDemo() {
       // broken - that's a bug to surface, not a state to silently accept.
       else set({ error: "duplicate claim did not revert - check the deployed contracts" });
     } catch (e) {
-      set({ busy: null, error: e?.message ?? String(e) });
+      set({ busy: null, error: describeError(e) });
     }
   };
 
@@ -176,7 +188,7 @@ export default function SoleDemo() {
       if (reverted) set({ error: reason });
       else set({ state: "CONSUMED", consumed: true, rejected: false });
     } catch (e) {
-      set({ busy: null, error: e?.message ?? String(e) });
+      set({ busy: null, error: describeError(e) });
     }
   };
 
@@ -198,7 +210,7 @@ export default function SoleDemo() {
       if (reverted) { push("right is spent everywhere, holder still hidden"); set({ venue2: true }); }
       else set({ error: "second-venue finance did not revert - check the deployed contracts" });
     } catch (e) {
-      set({ busy: null, error: e?.message ?? String(e) });
+      set({ busy: null, error: describeError(e) });
     }
   };
 

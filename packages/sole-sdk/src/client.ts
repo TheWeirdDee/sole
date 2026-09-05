@@ -56,6 +56,18 @@ interface PrivacyInvokeArgs {
 const ZERO: Felt = "0x0";
 const toFelt = (n: number | bigint): Felt => "0x" + n.toString(16);
 
+// The Wallet API's FELT type is spec'd as ^0x(0|[a-fA-F1-9]{1}[a-fA-F0-9]{0,62})$
+// - no leading zero digits, unlike sncast/explorer display addresses (this
+// repo's deployed addresses, e.g. "0x0788f8...", all carry one). A wallet
+// enforcing that pattern on strk20InvokeTransaction's payload rejects a
+// zero-padded value outright (INVALID_REQUEST_PAYLOAD), even though the same
+// address works fine through a plain account.execute() call, which is far
+// more lenient about hex formatting. Every felt reaching the wallet API must
+// be re-normalized through this, not just the addresses known to be padded
+// today - Poseidon outputs are normalized already, but there's no guarantee
+// a future one won't happen to start with a zero nibble.
+export const normalizeFelt = (hex: string): Felt => "0x" + BigInt(hex).toString(16);
+
 export interface SoleAddresses {
   registry: string;
   anonymizer: string;
@@ -183,19 +195,19 @@ export class SoleClient {
     account: SoleAccount, operation: ClaimOperation, args: PrivacyInvokeArgs,
   ): Promise<string> {
     // Wallet-api FELT is a hex string, not a bigint - every field here must
-    // already be (or become) "0x...".
+    // already be (or become) "0x...", and normalized (see normalizeFelt).
     const calldata: Felt[] = [
       toFelt(operation),
-      args.slotKey ?? ZERO,
-      args.claimCommitment ?? ZERO,
-      args.nullifier ?? ZERO,
-      args.adapter ?? ZERO,
-      args.authSlotKey ?? ZERO,
-      args.authNonce ?? ZERO,
-      args.amountCommitment ?? ZERO,
+      normalizeFelt(args.slotKey ?? ZERO),
+      normalizeFelt(args.claimCommitment ?? ZERO),
+      normalizeFelt(args.nullifier ?? ZERO),
+      normalizeFelt(args.adapter ?? ZERO),
+      normalizeFelt(args.authSlotKey ?? ZERO),
+      normalizeFelt(args.authNonce ?? ZERO),
+      normalizeFelt(args.amountCommitment ?? ZERO),
     ];
     const { transaction_hash } = await account.strk20InvokeTransaction([
-      { type: "invoke", contract: this.addrs.anonymizer, calldata },
+      { type: "invoke", contract: normalizeFelt(this.addrs.anonymizer), calldata },
     ]);
     return transaction_hash;
   }
