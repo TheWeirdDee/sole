@@ -69,6 +69,10 @@ const toFelt = (n: number | bigint): Felt => "0x" + n.toString(16);
 const STRK_MAINNET: Felt = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 const PRIVACY_ACTION_FEE: Felt = "0x3782dace9d900000"; // 4 STRK (18 decimals)
 
+// Wallet API error code for "account has no viewing key registered with the
+// STRK20 pool yet" (@starknet-io/starknet-types-0104 wallet-api/errors.d.ts).
+const NOT_REGISTERED_CODE = 118;
+
 // The Wallet API's FELT type is spec'd as ^0x(0|[a-fA-F1-9]{1}[a-fA-F0-9]{0,62})$
 // - no leading zero digits, unlike sncast/explorer display addresses (this
 // repo's deployed addresses, e.g. "0x0788f8...", all carry one). A wallet
@@ -224,11 +228,29 @@ export class SoleClient {
       normalizeFelt(args.authNonce ?? ZERO),
       normalizeFelt(args.amountCommitment ?? ZERO),
     ];
-    const { transaction_hash } = await account.strk20InvokeTransaction([
+    const actions: Parameters<SoleAccount["strk20InvokeTransaction"]>[0] = [
       { type: "deposit", token: normalizeFelt(STRK_MAINNET), amount: PRIVACY_ACTION_FEE },
       { type: "invoke", contract: normalizeFelt(this.addrs.anonymizer), calldata },
-    ]);
-    return transaction_hash;
+    ];
+    try {
+      const { transaction_hash } = await account.strk20InvokeTransaction(actions);
+      return transaction_hash;
+    } catch (e: any) {
+      if (e?.code !== NOT_REGISTERED_CODE) throw e;
+      // The Wallet API spec calls pool registration "transparent", but Ready
+      // returns NOT_REGISTERED on a combined deposit+invoke for an account's
+      // first-ever STRK20 use rather than registering inline. A standalone
+      // deposit - the same single-action shape every STRK20-by-example
+      // first-use flow shows - registers the account; once that's confirmed
+      // on-chain, retry the original action.
+      console.info("[sole-sdk] account not yet registered with the STRK20 pool - registering via a standalone deposit, then retrying");
+      const { transaction_hash: registerTx } = await account.strk20InvokeTransaction([
+        { type: "deposit", token: normalizeFelt(STRK_MAINNET), amount: PRIVACY_ACTION_FEE },
+      ]);
+      await this.provider.waitForTransaction(registerTx);
+      const { transaction_hash } = await account.strk20InvokeTransaction(actions);
+      return transaction_hash;
+    }
   }
 
   /** Direct (non-pool) call into the anonymizer, for operations that carry
