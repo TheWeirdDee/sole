@@ -56,6 +56,19 @@ interface PrivacyInvokeArgs {
 const ZERO: Felt = "0x0";
 const toFelt = (n: number | bigint): Felt => "0x" + n.toString(16);
 
+// STRK's mainnet ERC-20 address (verified live: symbol() -> "STRK",
+// decimals() -> 18). Every documented privacy_invoke example - Swap, Vesu,
+// Escrow, and even the lower-level starknet-privacy-sdk builder - pairs the
+// invoke action with a real value-moving action (withdraw/deposit/transfer)
+// in the same STRK20 transaction; none show invoke used completely alone.
+// A bare invoke-only actions array is rejected by the wallet as
+// INVALID_REQUEST_PAYLOAD before it ever reaches proving. This deposits the
+// flat per-action fee (see SETUP.md/README) from the caller's own public
+// balance into their own private balance - never sent elsewhere, and rolled
+// back atomically with the rest of the transaction if the invoke reverts.
+const STRK_MAINNET: Felt = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
+const PRIVACY_ACTION_FEE: Felt = "0x3782dace9d900000"; // 4 STRK (18 decimals)
+
 // The Wallet API's FELT type is spec'd as ^0x(0|[a-fA-F1-9]{1}[a-fA-F0-9]{0,62})$
 // - no leading zero digits, unlike sncast/explorer display addresses (this
 // repo's deployed addresses, e.g. "0x0788f8...", all carry one). A wallet
@@ -183,12 +196,17 @@ export class SoleClient {
    * Escrow). Builds the full flat positional calldata the Cairo side expects
    * (operation, slot_key, claim_commitment, nullifier, adapter, auth.slot_key,
    * auth.nonce, amount_commitment), zero-filling whatever this operation
-   * doesn't use. No open-note transfer action is needed alongside it: unlike
-   * Swap/Vesu, privacy_invoke always returns an empty Span<OpenNoteDeposit>
-   * (Sole moves no value through the pool), so the transaction is the single
-   * invoke action alone. The wallet proves a shielded funding note in ZK
-   * before dispatching, so the anonymizer - not the raw wallet - is the
-   * caller the registry records (docs/INTEGRATING.md,
+   * doesn't use. Sole's privacy_invoke always returns an empty
+   * Span<OpenNoteDeposit> (it moves no value through the pool), but the
+   * transaction still needs a real value-moving action alongside the invoke -
+   * every documented anonymizer helper (Swap, Vesu, Escrow) pairs invoke with
+   * a withdraw/deposit/transfer, and a bare invoke-only actions array is
+   * rejected by the wallet as INVALID_REQUEST_PAYLOAD before it ever reaches
+   * proving. A `deposit` of the flat per-action fee into the caller's own
+   * private balance satisfies that without moving value anywhere but back to
+   * them, and rolls back atomically if the invoke reverts. The wallet proves
+   * a shielded funding note in ZK before dispatching, so the anonymizer - not
+   * the raw wallet - is the caller the registry records (docs/INTEGRATING.md,
    * strk20-wallet-api/private-defi).
    */
   private async privacyInvoke(
@@ -207,6 +225,7 @@ export class SoleClient {
       normalizeFelt(args.amountCommitment ?? ZERO),
     ];
     const { transaction_hash } = await account.strk20InvokeTransaction([
+      { type: "deposit", token: normalizeFelt(STRK_MAINNET), amount: PRIVACY_ACTION_FEE },
       { type: "invoke", contract: normalizeFelt(this.addrs.anonymizer), calldata },
     ]);
     return transaction_hash;

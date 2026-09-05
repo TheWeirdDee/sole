@@ -42,14 +42,19 @@ await sole.settleAndRepay(account, ref, claimantSecret, claimCommitment); // -> 
 
 ## The privacy_invoke seam
 `SoleClient.privacyInvoke` calls `account.strk20InvokeTransaction([{ type:
-"invoke", contract: anonymizer, calldata }])` — the same call every STRK20
-anonymizer helper uses. The wallet proves a shielded funding note and
-dispatches into `ClaimAnonymizer::privacy_invoke`, so the registry records
-the anonymizer as caller, never the wallet. No open-note transfer action is
-needed alongside it: `privacy_invoke` always returns an empty
-`Span<OpenNoteDeposit>` here, since Sole moves no value through the pool —
-only state transitions. Do NOT call the registry directly: it reverts
-`CALLER_NOT_ANONYMIZER`, by design.
+"deposit", token: STRK, amount: <flat fee> }, { type: "invoke", contract:
+anonymizer, calldata }])` — the same call every STRK20 anonymizer helper
+uses. The wallet proves a shielded funding note and dispatches into
+`ClaimAnonymizer::privacy_invoke`, so the registry records the anonymizer as
+caller, never the wallet. The `deposit` action is required alongside the
+invoke: every documented anonymizer helper pairs `invoke` with a real
+value-moving action, and a bare invoke-only actions array is rejected by the
+wallet as `INVALID_REQUEST_PAYLOAD` before it reaches proving. Sole itself
+moves no value through the pool - `privacy_invoke` always returns an empty
+`Span<OpenNoteDeposit>` here - so the deposit just moves the flat per-action
+fee from the caller's own public balance into their own private balance,
+rolled back atomically if the invoke reverts. Do NOT call the registry
+directly: it reverts `CALLER_NOT_ANONYMIZER`, by design.
 
 ## What you get
 - `isClaimable(ref)` — availability without learning the holder.
