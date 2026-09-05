@@ -18,7 +18,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body>
+      {/* suppressHydrationWarning: browser extensions (Grammarly, etc.) inject
+          attributes like data-gr-ext-installed onto <body> before React
+          hydrates, which is a false-positive mismatch - not an SSR bug. */}
+      <body suppressHydrationWarning>
         <Nav />
         {children}
         <footer style={{ borderTop: "1px solid var(--rule)", padding: "34px 0",

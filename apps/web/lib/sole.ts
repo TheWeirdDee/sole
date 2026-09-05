@@ -6,11 +6,15 @@
 // the same registry/anonymizer/pool).
 
 import { RpcProvider, WalletAccountV6 } from "starknet";
-// Named import, not default: the package's default export is already the
-// resolved GetStarknetResult object (getAvailableWallets/enable directly on
-// it), not the getStarknet() function - calling the default as a function
-// throws "is not a function".
-import { getStarknet } from "@starknet-io/get-starknet-core";
+// createStore() (get-starknet-core >=6, the "next" dist-tag - same pin-past-
+// latest gotcha as starknet@^10.4.0 itself) returns wallets already wrapped
+// in Wallet Standard shape (.features["standard:connect"], etc.), which is
+// what WalletAccountV6.connect() requires. The older getAvailableWallets()/
+// enable() pair (get-starknet-core@4.x, resolved by a bare ^4.0.8) returns
+// the pre-wallet-standard StarknetWindowObject shape instead - passing that
+// into connect() throws "Cannot read properties of undefined (reading
+// 'standard:connect')", since it has no .features at all.
+import { createStore } from "@starknet-io/get-starknet-core";
 import { SoleClient, type SoleAddresses } from "@sole/sdk";
 
 const RPC = process.env.NEXT_PUBLIC_STARKNET_RPC || "https://rpc.starknet.lava.build";
@@ -45,12 +49,11 @@ export function getSoleClients() {
 }
 
 export async function connectWallet(): Promise<WalletAccountV6> {
-  const wallets = await getStarknet().getAvailableWallets();
+  const wallets = createStore().getWallets();
   if (wallets.length === 0) {
     throw new Error("No Starknet wallet detected - install Ready (ready.co) and reload.");
   }
-  const enabled = await getStarknet().enable(wallets[0]);
-  return WalletAccountV6.connect(provider, enabled as any);
+  return WalletAccountV6.connect(provider, wallets[0]);
 }
 
 /** A fresh felt, browser-native (crypto.getRandomValues), for demo-only
