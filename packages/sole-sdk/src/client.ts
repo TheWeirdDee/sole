@@ -184,7 +184,9 @@ export class SoleClient {
   ): Promise<{ tx: string; claimCommitment: Felt }> {
     const slotKey = this.slotKeyFor(reference);
     const claimCommitment = deriveClaimCommitment(slotKey, claimantSecret, fundingNote);
-    const tx = await this.privacyInvoke(account, ClaimOperation.Claim, { slotKey, claimCommitment });
+    const tx = await this.privacyInvoke(
+      account, ClaimOperation.Claim, { slotKey, claimCommitment }, this.addrs.registry,
+    );
     return { tx, claimCommitment };
   }
 
@@ -192,7 +194,7 @@ export class SoleClient {
   async settle(account: SoleAccount, reference: string, claimantSecret: Felt): Promise<string> {
     const slotKey = this.slotKeyFor(reference);
     const nullifier = deriveNullifier(claimantSecret, slotKey);
-    return this.privacyInvoke(account, ClaimOperation.Settle, { slotKey, nullifier });
+    return this.privacyInvoke(account, ClaimOperation.Settle, { slotKey, nullifier }, this.addrs.registry);
   }
 
   /** Authorize + execute one financing action against the venue. Only runs
@@ -203,7 +205,8 @@ export class SoleClient {
     const slotKey = this.slotKeyFor(reference);
     const nonce = deriveExecNonce(slotKey, claimCommitment);
     return this.privacyInvoke(account, ClaimOperation.Finance,
-      { adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce, amountCommitment });
+      { adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce, amountCommitment },
+      this.addrs.adapter);
   }
 
   /** Settle: repay the venue position and consume the right, atomically. */
@@ -214,7 +217,8 @@ export class SoleClient {
     const nullifier = deriveNullifier(claimantSecret, slotKey);
     const nonce = deriveExecNonce(slotKey, claimCommitment);
     return this.privacyInvoke(account, ClaimOperation.SettleAndRepay,
-      { slotKey, nullifier, adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce });
+      { slotKey, nullifier, adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce },
+      this.addrs.adapter);
   }
 
   // ----- scoped disclosure projections -----
@@ -242,9 +246,20 @@ export class SoleClient {
    * a shielded funding note in ZK before dispatching, so the anonymizer - not
    * the raw wallet - is the caller the registry records (docs/INTEGRATING.md,
    * strk20-wallet-api/private-defi).
+   *
+   * strk20InvokeTransaction resolving is NOT proof the invoke ran: observed
+   * live on mainnet, a combined deposit+invoke can confirm with no revert
+   * while the wallet silently omits the invoke from what it actually submits
+   * (verified by decoding the raw on-chain calldata - the anonymizer address
+   * was simply absent). `expectAddress` is the contract only the invoke's
+   * effect can touch (the registry for claim/settle, the adapter for
+   * finance/settleAndRepay); if it's missing from the confirmed receipt's
+   * events, the invoke was dropped, and this retries once with the invoke
+   * sent alone - by this point the account holds real private balance from
+   * the deposit already made, so there's nothing left to drop it in favor of.
    */
   private async privacyInvoke(
-    account: SoleAccount, operation: ClaimOperation, args: PrivacyInvokeArgs,
+    account: SoleAccount, operation: ClaimOperation, args: PrivacyInvokeArgs, expectAddress: Felt,
   ): Promise<string> {
     // Wallet-api FELT is a hex string, not a bigint - every field here must
     // already be (or become) "0x...", and normalized (see normalizeFelt).
@@ -259,29 +274,51 @@ export class SoleClient {
       normalizeFelt(args.amountCommitment ?? ZERO),
     ];
     const depositAmount = await this.privacyActionDeposit();
-    const actions: Parameters<SoleAccount["strk20InvokeTransaction"]>[0] = [
-      { type: "deposit", token: normalizeFelt(STRK_MAINNET), amount: depositAmount },
-      { type: "invoke", contract: normalizeFelt(this.addrs.anonymizer), calldata },
-    ];
-    try {
-      const { transaction_hash } = await account.strk20InvokeTransaction(actions);
-      return transaction_hash;
-    } catch (e: any) {
-      if (e?.code !== NOT_REGISTERED_CODE) throw e;
-      // The Wallet API spec calls pool registration "transparent", but Ready
-      // returns NOT_REGISTERED on a combined deposit+invoke for an account's
-      // first-ever STRK20 use rather than registering inline. A standalone
-      // deposit - the same single-action shape every STRK20-by-example
-      // first-use flow shows - registers the account; once that's confirmed
-      // on-chain, retry the original action.
-      console.info("[sole-sdk] account not yet registered with the STRK20 pool - registering via a standalone deposit, then retrying");
-      const { transaction_hash: registerTx } = await account.strk20InvokeTransaction([
-        { type: "deposit", token: normalizeFelt(STRK_MAINNET), amount: depositAmount },
-      ]);
-      await this.provider.waitForTransaction(registerTx);
-      const { transaction_hash } = await account.strk20InvokeTransaction(actions);
-      return transaction_hash;
-    }
+    const invokeAction = {
+      type: "invoke" as const, contract: normalizeFelt(this.addrs.anonymizer), calldata,
+    };
+    const depositAction = {
+      type: "deposit" as const, token: normalizeFelt(STRK_MAINNET), amount: depositAmount,
+    };
+
+    const attempt = async (
+      actions: Parameters<SoleAccount["strk20InvokeTransaction"]>[0],
+    ): Promise<{ hash: string; ran: boolean }> => {
+      let hash: string;
+      try {
+        ({ transaction_hash: hash } = await account.strk20InvokeTransaction(actions));
+      } catch (e: any) {
+        if (e?.code !== NOT_REGISTERED_CODE) throw e;
+        // The Wallet API spec calls pool registration "transparent", but
+        // Ready returns NOT_REGISTERED on a combined deposit+invoke for an
+        // account's first-ever STRK20 use rather than registering inline. A
+        // standalone deposit - the same single-action shape every
+        // STRK20-by-example first-use flow shows - registers the account;
+        // once that's confirmed on-chain, retry the original action.
+        console.info("[sole-sdk] account not yet registered with the STRK20 pool - registering via a standalone deposit, then retrying");
+        const { transaction_hash: registerTx } = await account.strk20InvokeTransaction([depositAction]);
+        await this.provider.waitForTransaction(registerTx);
+        ({ transaction_hash: hash } = await account.strk20InvokeTransaction(actions));
+      }
+      const receipt: any = await this.provider.waitForTransaction(hash);
+      const expected = BigInt(expectAddress);
+      const ran = (receipt.events ?? []).some(
+        (e: any) => e.from_address != null && BigInt(e.from_address) === expected,
+      );
+      return { hash, ran };
+    };
+
+    const first = await attempt([depositAction, invokeAction]);
+    if (first.ran) return first.hash;
+
+    console.warn("[sole-sdk] the invoke action was not reflected on-chain (wallet likely dropped it from the combined transaction) - retrying with the invoke alone");
+    const second = await attempt([invokeAction]);
+    if (second.ran) return second.hash;
+
+    throw new Error(
+      `privacy_invoke did not reach ${expectAddress} after two attempts (last tx: ${second.hash}). ` +
+      "The wallet confirmed both transactions without executing the invoke action - this is a wallet-side issue, not a rejected call.",
+    );
   }
 
   /** Direct (non-pool) call into the anonymizer, for operations that carry
