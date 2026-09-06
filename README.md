@@ -153,7 +153,7 @@ cd packages/sole-sdk && npm install && npm test # SDK
 cd apps/web && npm install && npm run dev        # web app, http://localhost:3000
 ```
 
-Full prerequisites and the deploy sequence: [`SETUP.md`](./SETUP.md). Integrating Sole into another app without cloning this repo: [`docs/INTEGRATING.md`](./docs/INTEGRATING.md).
+Full prerequisites and the deploy sequence: [`SETUP.md`](./SETUP.md). First time connecting a wallet: [`docs/WALLET_SETUP.md`](./docs/WALLET_SETUP.md) covers the one-time STRK20 registration step, exactly where to find it, and the one to avoid. Integrating Sole into another app without cloning this repo: [`docs/INTEGRATING.md`](./docs/INTEGRATING.md).
 
 ## Repository
 
@@ -164,7 +164,7 @@ packages/sole-sdk/  derivation (parity with Cairo) + integration client
 apps/web/           the demo product: a human drives the full lifecycle
 evidence/           claims.json (claim -> artifact), deployment.json, verification
 scripts/            verify-mainnet.ts, probe-mainnet.ts
-docs/               PRIVACY_BOUNDARY, STATE_MACHINE, INTEGRATING, DEMO
+docs/               PRIVACY_BOUNDARY, STATE_MACHINE, INTEGRATING, DEMO, WALLET_SETUP
 ```
 
 Companion documents: [DECISIONS](./DECISIONS.md) · [THREAT_MODEL](./THREAT_MODEL.md) · [SECURITY](./SECURITY.md) · [CO_DESIGN](./CO_DESIGN.md) · [BUILD_LOG](./BUILD_LOG.md)

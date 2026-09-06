@@ -10,13 +10,10 @@
   written, 6 STRK as verified live on mainnet in this repo).
 - A privacy-enabled wallet (Ready extension) + starknet.js v10.4.0
 - **The connected account must register with the STRK20 pool first, once.**
-  In Ready, this is not the "Smart Account activation" toggle (a different,
-  unrelated feature) - it's a separate **"Enable private tokens"** flow
-  (found on the main wallet view, not Settings), which publishes a viewing
-  key on-chain. Every `claim`/`finance`/`settle`/`settleAndRepay` call
-  reverts with `NOT_REGISTERED` until this is done. Do this before running
-  the demo, or the first private action will stall on a wallet error that
-  has nothing to do with the dapp.
+  Full walkthrough, with exactly which screen to use and which one to avoid:
+  [`docs/WALLET_SETUP.md`](docs/WALLET_SETUP.md). Skipping this makes every
+  `claim`/`finance`/`settle`/`settleAndRepay` call revert with
+  `NOT_REGISTERED` - a wallet setup step, not a dapp bug.
 
 ## Contracts
 ```
