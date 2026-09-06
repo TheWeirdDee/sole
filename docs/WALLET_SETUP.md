@@ -63,6 +63,14 @@ account. If you ever connect a *different* account, it needs its own
 "Enable private tokens" pass - registration is per-account, not
 wallet-wide.
 
+## Expect two wallet prompts for "Shield, claim & finance"
+
+That button submits **two separate mainnet transactions** - claim, then
+finance - not one. Ready will ask you to sign twice in a row. That is
+expected behavior, not a stuck wallet and not the dapp retrying anything.
+If you only confirm the first prompt, the right becomes ACTIVE (claimed)
+but is not yet financed, and the second half never happened.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -70,3 +78,5 @@ wallet-wide.
 | `NOT_REGISTERED` / code 118 | This account hasn't completed step 2-3 above. |
 | Wallet dialog shows a red "Transaction failed" *before* you press Confirm | The wallet's pre-flight simulation predicts a revert - confirming won't help; something upstream needs fixing, not another click. |
 | Wrong account shown as connected | Ready remembers multiple accounts; check the account name/address at the top of the wallet panel matches the one you registered and funded. |
+| Two sign prompts back to back for one button | Expected - see above, that button is two transactions. |
+| Ready's own console logs `No viewing key available for account ... Ensure the account is provisioned via the backend` | Seen even on a freshly registered, freshly funded account, on the `finance()` step specifically. This is Ready's own extension reporting that *its* backend hasn't finished provisioning the account for privacy operations - not something Sole's contracts or SDK can detect or fix from the dapp side. If finance keeps failing with a generic wallet error right after this log line appears, the wallet itself isn't ready yet; retrying immediately is unlikely to help. |

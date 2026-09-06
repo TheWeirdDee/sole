@@ -321,6 +321,13 @@ export default function SoleDemo() {
       )}
 
       {/* actors */}
+      {live && (
+        <p style={{ fontSize: 12.5, color: faded, margin: "0 0 10px" }}>
+          "Shield, claim & finance" is two separate mainnet transactions, so Ready will prompt you
+          to sign <strong>twice</strong> in a row - once for claim, once for finance. That's expected,
+          not a retry or a stuck wallet.
+        </p>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <Actor who="Bank A" role="acquires and finances the right">
           <Btn onClick={claimA} disabled={s.state !== "UNCLAIMED" || !s.connected || !!s.busy} icon={s.busy === "claimA" || s.busy === "financeA" ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />} primary>
@@ -330,9 +337,19 @@ export default function SoleDemo() {
             {s.busy === "settle" ? "Settling…" : "Settle & consume"}
           </Btn>
           {live && s.state === "ACTIVE" && s.holder === "A" && (
-            <Btn onClick={dryRunFinance} disabled={!!s.busy} icon={s.busy === "dryrun" ? <Loader2 size={16} className="spin" /> : <Eye size={16} />}>
-              {s.busy === "dryrun" ? "Simulating…" : "Debug: dry-run finance (no gas)"}
-            </Btn>
+            <>
+              {/* Deliberately NOT disabled by s.busy: this is the one tool meant
+                  to work even when finance() is hung waiting on an unresolved
+                  wallet prompt, which locks every other busy-gated button. */}
+              <Btn onClick={dryRunFinance} disabled={s.busy === "dryrun"} icon={s.busy === "dryrun" ? <Loader2 size={16} className="spin" /> : <Eye size={16} />}>
+                {s.busy === "dryrun" ? "Simulating…" : "Debug: dry-run finance (no gas)"}
+              </Btn>
+              {s.busy && s.busy !== "dryrun" && (
+                <button onClick={() => set({ busy: null })} style={{ border: "none", background: "none", color: faded, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, textAlign: "left", padding: 0 }}>
+                  Stuck? Clear the busy state (doesn't cancel a pending wallet prompt, just unlocks the buttons)
+                </button>
+              )}
+            </>
           )}
         </Actor>
         <Actor who="Bank B" role="attempts the same right">
