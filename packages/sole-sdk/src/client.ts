@@ -263,12 +263,19 @@ export class SoleClient {
    * them was a real bug here - a genuine revert (e.g. AUTH_NONCE_MISMATCH)
    * was being misread as "dropped" and retried with the invoke sent alone,
    * which fails wallet-side payload validation on its own regardless (a bare
-   * invoke has no viable single-shot recovery - confirmed separately), so
-   * every real revert turned into two failed wallet prompts instead of one
-   * honest error. This now checks execution_status first: a real revert
-   * throws immediately with the actual reason, and only a *successful*
-   * transaction that still didn't touch expectAddress is treated as a
-   * dropped invoke, retried once with the same combined shape (not alone).
+   * invoke has no viable single-shot recovery - confirmed separately). This
+   * checks execution_status first: a real revert throws immediately with
+   * the actual reason.
+   *
+   * No automatic retry on a successful-but-missing-event result either
+   * anymore: firing a second strk20InvokeTransaction immediately back to
+   * back with the first was itself producing wallet/paymaster-level
+   * failures (PaymasterV2Error 156, no transaction ever submitted) with
+   * balance ruled out as the cause - the rapid back-to-back pair is the
+   * likely trigger, not anything in the calldata. claim() has only ever
+   * been attempted once per call and has never shown this failure mode.
+   * So this now throws a clear, specific error for the caller to retry as
+   * a fresh, separate action instead of retrying inline.
    */
   private async privacyInvoke(
     account: SoleAccount, operation: ClaimOperation, args: PrivacyInvokeArgs, expectAddress: Felt,
@@ -323,28 +330,22 @@ export class SoleClient {
       return { hash, reverted: false, ran };
     };
 
-    const first = await attempt([depositAction, invokeAction]);
-    if (first.reverted) {
+    const result = await attempt([depositAction, invokeAction]);
+    if (result.reverted) {
       throw Object.assign(
-        new Error(`privacy_invoke reverted: ${first.revertReason ?? "(no reason reported)"}`),
-        { txHash: first.hash, revertReason: first.revertReason },
+        new Error(`privacy_invoke reverted: ${result.revertReason ?? "(no reason reported)"}`),
+        { txHash: result.hash, revertReason: result.revertReason },
       );
     }
-    if (first.ran) return first.hash;
+    if (result.ran) return result.hash;
 
-    console.warn("[sole-sdk] the transaction succeeded but never touched the expected contract (wallet likely dropped the invoke) - retrying with the same combined transaction");
-    const second = await attempt([depositAction, invokeAction]);
-    if (second.reverted) {
-      throw Object.assign(
-        new Error(`privacy_invoke reverted on retry: ${second.revertReason ?? "(no reason reported)"}`),
-        { txHash: second.hash, revertReason: second.revertReason },
-      );
-    }
-    if (second.ran) return second.hash;
-
-    throw new Error(
-      `privacy_invoke did not reach ${expectAddress} after two attempts (last tx: ${second.hash}). ` +
-      "The wallet confirmed both transactions without executing the invoke action - this is a wallet-side issue, not a rejected call.",
+    throw Object.assign(
+      new Error(
+        `privacy_invoke did not reach ${expectAddress} (tx: ${result.hash}). The transaction ` +
+        "succeeded but the wallet did not execute the invoke action - a known intermittent " +
+        "issue. Wait a moment and try this action again as a fresh attempt.",
+      ),
+      { txHash: result.hash },
     );
   }
 
