@@ -47,5 +47,26 @@
       "evidence": "tests/adversarial/test_venue_gating.cairo: venue_refuses_to_finance_the_same_active_right_twice"
     }
   ],
-  "transactions": []
+  "transactions": [
+    {
+      "hash": "0x3029e23d3eaa0ee82a18b81b828ff49188cb1d8495529248b26e658e53714e0",
+      "kind": "claim",
+      "note": "Reconciled live against the registry/anonymizer contracts via direct RPC (not just the app log): SUCCEEDED, emits RightClaimed from the real registry, routes through the real anonymizer."
+    },
+    {
+      "hash": "0x1d17afaa5c31d35a4465796f9e88248e8b440d5121972b88a601b2ec1abe8c3",
+      "kind": "claim",
+      "note": "Same reconciliation as above. registry.state_of() for this slot_key reads Active live on-chain."
+    },
+    {
+      "hash": "0x1990b99a16dc10c8427f8be3942f9568946867d8d24b37e5109e0ad2e19128",
+      "kind": "claim",
+      "note": "Same reconciliation as above."
+    },
+    {
+      "hash": "0x1b015f46fc8bccd11ea303e15c6bd5bb9543f3a0fc44c3e7496678c5136aa4b",
+      "kind": "claim",
+      "note": "From a second, independent, previously-unused account - rules out anything account-specific about the claim path."
+    }
+  ]
 }
