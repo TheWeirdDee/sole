@@ -209,6 +209,30 @@ export class SoleClient {
       this.addrs.adapter);
   }
 
+  /** finance(), submitted self-paid instead of through the wallet's
+   *  paymaster-sponsored strk20InvokeTransaction route. Every live finance()
+   *  attempt has failed at wallet-side simulation with a generic error and
+   *  no Cairo revert reason - consistent with the wallet's paymaster
+   *  declining to sponsor a call into a contract (the adapter) it's never
+   *  seen before, rather than the call being invalid. strk20PrepareInvoke
+   *  builds the same actions and proof without the wallet adding its own
+   *  fee-sponsorship action, and executeWithProof() submits it as an
+   *  ordinary self-paid invoke - if the paymaster is really the blocker,
+   *  this reaches the contract either way and returns a real outcome
+   *  (success or an actual revert reason) instead of a wallet-side refusal.
+   *  Costs real gas paid by the connected account - not a dry run. */
+  async financeSelfPaid(
+    account: SoleAccount, reference: string, claimCommitment: Felt, amountCommitment: Felt,
+  ): Promise<string> {
+    const slotKey = this.slotKeyFor(reference);
+    const nonce = deriveExecNonce(slotKey, claimCommitment);
+    const { invokeAction, depositAction } = await this.buildActions(ClaimOperation.Finance,
+      { adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce, amountCommitment });
+    const { call, proof } = await account.strk20PrepareInvoke([depositAction, invokeAction], false);
+    const { transaction_hash } = await account.executeWithProof(call, proof);
+    return transaction_hash;
+  }
+
   /** Settle: repay the venue position and consume the right, atomically. */
   async settleAndRepay(
     account: SoleAccount, reference: string, claimantSecret: Felt, claimCommitment: Felt,

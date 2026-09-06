@@ -165,6 +165,32 @@ export default function SoleDemo() {
     }
   };
 
+  /** finance() submitted self-paid (no paymaster sponsorship) instead of
+   *  through the wallet's usual sponsored route. COSTS REAL GAS - this is
+   *  a deliberate single attempt to test whether the paymaster itself is
+   *  refusing to sponsor a call into the adapter, not a free diagnostic. */
+  const financeSelfPaid = async () => {
+    set({ busy: "financeselfpaid", error: null });
+    try {
+      const { venue1 } = await getSoleClients();
+      const amountCommitment = randomFelt();
+      const tx = await venue1.financeSelfPaid(s.account, s.reference, s.claimCommitment, amountCommitment);
+      push(`Finance (self-paid) submitted ${tx} (pending) -> ${voyagerTxUrl(tx)}`);
+      const receipt = await provider.waitForTransaction(tx);
+      const status = receipt.execution_status ?? receipt.finality_status;
+      if (status === "REVERTED") {
+        push(`Finance (self-paid) reverted - ${receipt.revert_reason ?? "(no reason reported)"}`);
+        set({ busy: null, error: receipt.revert_reason ?? "(no reason reported)" });
+      } else {
+        push(`Finance (self-paid) confirmed (${status})`);
+        set({ busy: null });
+      }
+    } catch (e) {
+      push(`Finance (self-paid) error: ${describeError(e)}`);
+      set({ busy: null, error: describeError(e) });
+    }
+  };
+
   const claimB = async () => {
     if (!live) {
       set({ rejected: true });
@@ -344,7 +370,14 @@ export default function SoleDemo() {
               <Btn onClick={dryRunFinance} disabled={s.busy === "dryrun"} icon={s.busy === "dryrun" ? <Loader2 size={16} className="spin" /> : <Eye size={16} />}>
                 {s.busy === "dryrun" ? "Simulating…" : "Debug: dry-run finance (no gas)"}
               </Btn>
-              {s.busy && s.busy !== "dryrun" && (
+              {/* Also exempt from s.busy, for the same reason as the dry-run
+                  button above. This one costs real gas - it's a deliberate
+                  single attempt to bypass the wallet's paymaster sponsorship,
+                  not something to click repeatedly. */}
+              <Btn onClick={financeSelfPaid} disabled={s.busy === "financeselfpaid"} icon={s.busy === "financeselfpaid" ? <Loader2 size={16} className="spin" /> : <Wallet size={16} />} danger>
+                {s.busy === "financeselfpaid" ? "Submitting (self-paid)…" : "Debug: finance self-paid, no paymaster (real gas)"}
+              </Btn>
+              {s.busy && s.busy !== "dryrun" && s.busy !== "financeselfpaid" && (
                 <button onClick={() => set({ busy: null })} style={{ border: "none", background: "none", color: faded, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, textAlign: "left", padding: 0 }}>
                   Stuck? Clear the busy state (doesn't cancel a pending wallet prompt, just unlocks the buttons)
                 </button>
