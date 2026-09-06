@@ -1,6 +1,8 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { Nav } from "../components/Nav";
+import { SmoothScroll } from "../components/SmoothScroll";
+import { GrainOverlay } from "../components/GrainOverlay";
 
 export const metadata: Metadata = {
   title: "Sole — private exclusivity for economic rights",
@@ -18,21 +20,28 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      {/* suppressHydrationWarning: browser extensions (Grammarly, etc.) inject
-          attributes like data-gr-ext-installed onto <body> before React
-          hydrates, which is a false-positive mismatch - not an SSR bug. */}
       <body suppressHydrationWarning>
-        <Nav />
-        {children}
-        <footer style={{ borderTop: "1px solid var(--rule)", padding: "34px 0",
-          color: "var(--faded)", fontSize: 14, marginTop: 20 }}>
-          <div style={{ maxWidth: 1000, margin: "0 auto", padding: "0 26px" }}>
-            Sole · a single-use execution-right protocol for economic rights on STRK20 · Apache-2.0
-            <div style={{ fontSize: 12, marginTop: 8 }}>
-              Demo fixture data is labelled as fixture. The registry is use-case agnostic.
+        <GrainOverlay />
+        <SmoothScroll>
+          <Nav />
+          {children}
+          <footer
+            style={{
+              borderTop: "1px solid var(--rule)",
+              padding: "40px 0",
+              color: "var(--faded)",
+              fontSize: 14,
+              marginTop: 40,
+            }}
+          >
+            <div style={{ maxWidth: 1040, margin: "0 auto", padding: "0 26px", textAlign: "center" }}>
+              <div>Sole · a single-use execution-right protocol for economic rights on STRK20 · Apache-2.0</div>
+              <div style={{ fontSize: 12, marginTop: 8 }}>
+                Demo fixture data is labelled as fixture. The registry is use-case agnostic.
+              </div>
             </div>
-          </div>
-        </footer>
+          </footer>
+        </SmoothScroll>
       </body>
     </html>
   );

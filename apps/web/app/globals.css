@@ -2,13 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
-:root{
-  --parch:#e9e1ce;--parch2:#e0d6bd;--ink:#1a160f;--claret:#7c1d2a;
-  --claret-soft:#9c3b45;--gilt:#b08a3e;--faded:#8c8267;--rule:#cabd9d;--paper-line:#d7cbac;
+:root {
+  --parch: #e9e1ce;
+  --parch2: #e0d6bd;
+  --ink: #1a160f;
+  --claret: #7c1d2a;
+  --claret-soft: #9c3b45;
+  --gilt: #b08a3e;
+  --faded: #8c8267;
+  --rule: #cabd9d;
+  --paper-line: #d7cbac;
 }
-html{scroll-behavior:smooth}
-body{margin:0;background:var(--parch);color:var(--ink);
-  font-family:'Spectral',Georgia,serif;line-height:1.55;-webkit-font-smoothing:antialiased}
-.mono{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:.82em}
-/* full component styles live in the canonical design source, apps/web/preview.html,
-   which renders all four surfaces. Port routes from there into components. */
+
+html {
+  scroll-behavior: initial;
+}
+
+body {
+  margin: 0;
+  background-color: var(--parch);
+  color: var(--ink);
+  font-family: 'Spectral', Georgia, serif;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  position: relative;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* TV Static Grain Noise Overlay */
+.grain-overlay {
+  position: fixed;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.075;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 300 300' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='tvNoise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.88' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23tvNoise)'/%3E%3C/svg%3E");
+  animation: staticNoise 0.25s steps(5) infinite;
+  mix-blend-mode: multiply;
+}
+
+@keyframes staticNoise {
+  0% { transform: translate(0, 0); }
+  20% { transform: translate(-1.5%, 2%); }
+  40% { transform: translate(2%, -1.5%); }
+  60% { transform: translate(-2%, -2%); }
+  80% { transform: translate(1.5%, 1.5%); }
+  100% { transform: translate(0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grain-overlay {
+    animation: none;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+  }
+}
+
+.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.85em;
+}
