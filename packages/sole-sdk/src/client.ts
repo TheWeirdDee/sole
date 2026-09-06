@@ -253,10 +253,22 @@ export class SoleClient {
    * (verified by decoding the raw on-chain calldata - the anonymizer address
    * was simply absent). `expectAddress` is the contract only the invoke's
    * effect can touch (the registry for claim/settle, the adapter for
-   * finance/settleAndRepay); if it's missing from the confirmed receipt's
-   * events, the invoke was dropped, and this retries once with the invoke
-   * sent alone - by this point the account holds real private balance from
-   * the deposit already made, so there's nothing left to drop it in favor of.
+   * finance/settleAndRepay).
+   *
+   * waitForTransaction() does NOT throw on a reverted transaction by default
+   * (its errorStates option defaults to empty - it only watches finality,
+   * not execution outcome), so a real on-chain revert and a silently-dropped
+   * invoke both surface the same way if you only check for the expected
+   * event: no matching event, empty receipt.events either way. Conflating
+   * them was a real bug here - a genuine revert (e.g. AUTH_NONCE_MISMATCH)
+   * was being misread as "dropped" and retried with the invoke sent alone,
+   * which fails wallet-side payload validation on its own regardless (a bare
+   * invoke has no viable single-shot recovery - confirmed separately), so
+   * every real revert turned into two failed wallet prompts instead of one
+   * honest error. This now checks execution_status first: a real revert
+   * throws immediately with the actual reason, and only a *successful*
+   * transaction that still didn't touch expectAddress is treated as a
+   * dropped invoke, retried once with the same combined shape (not alone).
    */
   private async privacyInvoke(
     account: SoleAccount, operation: ClaimOperation, args: PrivacyInvokeArgs, expectAddress: Felt,
@@ -283,7 +295,7 @@ export class SoleClient {
 
     const attempt = async (
       actions: Parameters<SoleAccount["strk20InvokeTransaction"]>[0],
-    ): Promise<{ hash: string; ran: boolean }> => {
+    ): Promise<{ hash: string; reverted: boolean; revertReason?: string; ran: boolean }> => {
       let hash: string;
       try {
         ({ transaction_hash: hash } = await account.strk20InvokeTransaction(actions));
@@ -301,18 +313,33 @@ export class SoleClient {
         ({ transaction_hash: hash } = await account.strk20InvokeTransaction(actions));
       }
       const receipt: any = await this.provider.waitForTransaction(hash);
+      if (receipt.execution_status === "REVERTED") {
+        return { hash, reverted: true, revertReason: receipt.revert_reason, ran: false };
+      }
       const expected = BigInt(expectAddress);
       const ran = (receipt.events ?? []).some(
         (e: any) => e.from_address != null && BigInt(e.from_address) === expected,
       );
-      return { hash, ran };
+      return { hash, reverted: false, ran };
     };
 
     const first = await attempt([depositAction, invokeAction]);
+    if (first.reverted) {
+      throw Object.assign(
+        new Error(`privacy_invoke reverted: ${first.revertReason ?? "(no reason reported)"}`),
+        { txHash: first.hash, revertReason: first.revertReason },
+      );
+    }
     if (first.ran) return first.hash;
 
-    console.warn("[sole-sdk] the invoke action was not reflected on-chain (wallet likely dropped it from the combined transaction) - retrying with the invoke alone");
-    const second = await attempt([invokeAction]);
+    console.warn("[sole-sdk] the transaction succeeded but never touched the expected contract (wallet likely dropped the invoke) - retrying with the same combined transaction");
+    const second = await attempt([depositAction, invokeAction]);
+    if (second.reverted) {
+      throw Object.assign(
+        new Error(`privacy_invoke reverted on retry: ${second.revertReason ?? "(no reason reported)"}`),
+        { txHash: second.hash, revertReason: second.revertReason },
+      );
+    }
     if (second.ran) return second.hash;
 
     throw new Error(
