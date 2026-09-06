@@ -146,6 +146,25 @@ export default function SoleDemo() {
     }
   };
 
+  /** Temporary diagnostic: runs finance()'s wallet-side pre-flight
+   *  simulation (strk20PrepareInvoke, simulate=true) with no submission, no
+   *  confirmation, no gas, and no deposit moved - to see the wallet's actual
+   *  detailed error instead of the generic PaymasterV2Error code a live
+   *  attempt shows. Safe to click any number of times. */
+  const dryRunFinance = async () => {
+    set({ busy: "dryrun", error: null });
+    try {
+      const { venue1 } = await getSoleClients();
+      const amountCommitment = randomFelt();
+      const result = await venue1.dryRunFinance(s.account, s.reference, s.claimCommitment, amountCommitment);
+      push(`Dry-run finance() result: ${JSON.stringify(result)}`);
+      set({ busy: null });
+    } catch (e) {
+      push(`Dry-run finance() error: ${describeError(e)}`);
+      set({ busy: null, error: describeError(e) });
+    }
+  };
+
   const claimB = async () => {
     if (!live) {
       set({ rejected: true });
@@ -310,6 +329,11 @@ export default function SoleDemo() {
           <Btn onClick={settle} disabled={s.state !== "ACTIVE" || s.holder !== "A" || !!s.busy} icon={s.busy === "settle" ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}>
             {s.busy === "settle" ? "Settling…" : "Settle & consume"}
           </Btn>
+          {live && s.state === "ACTIVE" && s.holder === "A" && (
+            <Btn onClick={dryRunFinance} disabled={!!s.busy} icon={s.busy === "dryrun" ? <Loader2 size={16} className="spin" /> : <Eye size={16} />}>
+              {s.busy === "dryrun" ? "Simulating…" : "Debug: dry-run finance (no gas)"}
+            </Btn>
+          )}
         </Actor>
         <Actor who="Bank B" role="attempts the same right">
           <Btn onClick={claimB} disabled={s.state !== "ACTIVE" || !!s.busy} icon={s.busy === "claimB" ? <Loader2 size={16} className="spin" /> : <Ban size={16} />} danger>

@@ -277,9 +277,9 @@ export class SoleClient {
    * So this now throws a clear, specific error for the caller to retry as
    * a fresh, separate action instead of retrying inline.
    */
-  private async privacyInvoke(
-    account: SoleAccount, operation: ClaimOperation, args: PrivacyInvokeArgs, expectAddress: Felt,
-  ): Promise<string> {
+  /** Builds the same [deposit, invoke] action pair privacyInvoke() submits,
+   *  without submitting it - shared by privacyInvoke() and dryRun(). */
+  private async buildActions(operation: ClaimOperation, args: PrivacyInvokeArgs) {
     // Wallet-api FELT is a hex string, not a bigint - every field here must
     // already be (or become) "0x...", and normalized (see normalizeFelt).
     const calldata: Felt[] = [
@@ -299,6 +299,28 @@ export class SoleClient {
     const depositAction = {
       type: "deposit" as const, token: normalizeFelt(STRK_MAINNET), amount: depositAmount,
     };
+    return { invokeAction, depositAction };
+  }
+
+  /** Zero-cost diagnostic: runs the wallet's own pre-flight simulation
+   *  (strk20PrepareInvoke with simulate=true) for the finance() call without
+   *  submitting anything - no gas, no confirmation, no deposit moved. Returns
+   *  whatever detail the wallet reports, which is typically far more specific
+   *  than the generic PaymasterV2Error code a live attempt shows. */
+  async dryRunFinance(
+    account: SoleAccount, reference: string, claimCommitment: Felt, amountCommitment: Felt,
+  ): Promise<any> {
+    const slotKey = this.slotKeyFor(reference);
+    const nonce = deriveExecNonce(slotKey, claimCommitment);
+    const { invokeAction, depositAction } = await this.buildActions(ClaimOperation.Finance,
+      { adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce, amountCommitment });
+    return account.strk20PrepareInvoke([depositAction, invokeAction], true);
+  }
+
+  private async privacyInvoke(
+    account: SoleAccount, operation: ClaimOperation, args: PrivacyInvokeArgs, expectAddress: Felt,
+  ): Promise<string> {
+    const { invokeAction, depositAction } = await this.buildActions(operation, args);
 
     const attempt = async (
       actions: Parameters<SoleAccount["strk20InvokeTransaction"]>[0],
