@@ -3,7 +3,7 @@ name = "sole_contracts"
 version = "0.1.0"
 edition = "2024_07"
 license = "Apache-2.0"
-description = "Sole - a privacy-preserving exclusivity protocol for economic rights on STRK20"
+description = "Sole - a single-use execution-right state machine on STRK20"
 
 [dependencies]
 starknet = ">=2.8.0"
