@@ -40,8 +40,8 @@ fn deploy() -> IRightsRegistryDispatcher {
 // outputs; the registry treats them as opaque felts, which is the point.
 const SLOT_A: felt252 = 0x5107;   // canonical right "A"
 const SLOT_B: felt252 = 0x5108;   // canonical right "B"
-const COMMIT_A: felt252 = 0xC1A;  // Bank A's private claim commitment
-const COMMIT_B: felt252 = 0xC1B;  // Bank B's private claim commitment
+const COMMIT_A: felt252 = 0xC1A;  // opaque claim commitment for test A
+const COMMIT_B: felt252 = 0xC1B;  // opaque claim commitment for test B
 const NULL_A: felt252 = 0x0A;     // Bank A's nullifier
 
 // ---------- happy path ----------
@@ -155,8 +155,9 @@ fn zero_commitment_reverts() {
 fn direct_registry_call_reverts() {
     let r = deploy();
     // A raw wallet tries to drive the registry directly, bypassing the
-    // anonymizer boundary. Rejected: transitions must go through the
-    // privacy path or the claimant identity would leak.
+    // anonymizer boundary. Rejected: transitions must use the configured
+    // helper, so the registry caller is not the raw account. Receipt-level
+    // wallet correlation is a separate boundary documented elsewhere.
     start_cheat_caller_address(r.contract_address, STRANGER());
     r.register_right(SLOT_A);
 }
