@@ -50,6 +50,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# ephemeral input for scripts/submit-self-paid-claim.ts - a proof pasted from
+# the browser, regenerated each run, never meant to be committed
+scripts/self-paid-claim-input.json
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
