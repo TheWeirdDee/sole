@@ -9,7 +9,7 @@
     {
       "id": "C-2",
       "claim": "duplicate claim refused on-chain",
-      "evidence": "mainnet TX4 reverts RIGHT_ALREADY_ACTIVE (verify-mainnet.ts)"
+      "evidence": "tests/adversarial: second_claim_on_active_right_reverts. Ready's sponsored path does not submit intentionally reverting calls, so the live demo verifies the registry's ACTIVE precondition without claiming a mainnet rejected transaction."
     },
     {
       "id": "C-3",
@@ -19,7 +19,7 @@
     {
       "id": "C-4",
       "claim": "settlement consumes the right, once",
-      "evidence": "replayed_settlement_reverts + mainnet TX5"
+      "evidence": "replayed_settlement_reverts + mainnet settleAndRepay tx 0x31e7689cb1e267d80909157c094796c864ba6b606a036f07695414ca5292d85 (verify-mainnet.ts)"
     },
     {
       "id": "C-5",
@@ -29,12 +29,12 @@
     {
       "id": "C-6",
       "claim": "the money market executes only when Sole authorizes; never on a duplicate or after consumption",
-      "evidence": "tests/adversarial/test_venue_gating.cairo + mainnet finance TX4 vs reverted B TX5"
+      "evidence": "tests/adversarial/test_venue_gating.cairo (all cases) + mainnet finance tx 0x62c80fd0e2d782b827e33c1128088c72ba1bdc13eff99b461287bc84e108202 (executes when authorized, verify-mainnet.ts); the duplicate/post-consumption rejection cases are proven in tests only - a live duplicate-claim attempt timed out at the wallet without a conclusive on-chain result"
     },
     {
       "id": "C-7",
       "claim": "a consumed right is refused at a DIFFERENT venue too; single-use is global to the right, not local to one settlement",
-      "evidence": "tests/adversarial: second_venue_refuses_a_consumed_right + mainnet cross-venue rejection tx"
+      "evidence": "tests/adversarial: second_venue_refuses_a_consumed_right. The live demo reads venue 2's registry() wiring and the shared CONSUMED state without submitting an intentionally reverting sponsored transaction."
     },
     {
       "id": "C-8",
@@ -67,6 +67,16 @@
       "hash": "0x1b015f46fc8bccd11ea303e15c6bd5bb9543f3a0fc44c3e7496678c5136aa4b",
       "kind": "claim",
       "note": "From a second, independent, previously-unused account - rules out anything account-specific about the claim path."
+    },
+    {
+      "hash": "0x62c80fd0e2d782b827e33c1128088c72ba1bdc13eff99b461287bc84e108202",
+      "kind": "finance",
+      "note": "Reconciled directly against the deployed ExecutionAdapter: SUCCEEDED, routes through the real ClaimAnonymizer, adapter emits Financed for the claimed slot_key. finance() never touches RightsRegistry directly (state_of() is a view call), so this is verified via the adapter's own event, not a registry event."
+    },
+    {
+      "hash": "0x31e7689cb1e267d80909157c094796c864ba6b606a036f07695414ca5292d85",
+      "kind": "settle",
+      "note": "Reconciled directly against the registry and the adapter: SUCCEEDED, registry emits RightConsumed for the slot_key, adapter emits Repaid in the same atomic transaction, routes through the real ClaimAnonymizer."
     }
   ]
 }
