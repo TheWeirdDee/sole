@@ -130,6 +130,35 @@ reference. The live app never automatically retries a wallet timeout or a
 known-reverting negative path. Wallet setup and compatibility details are in
 [Wallet Setup](./docs/WALLET_SETUP.md).
 
+## How to test this yourself
+
+**No wallet, no gas, two minutes:** open the [live site](https://sole-web-app.vercel.app/),
+switch mode to **illustrative (offline)** top-right, and click through Bank A's
+buttons in order (Connect, Register, Claim, Record adapter position, then Bank
+B's check, Consume, then the second-adapter check). Each step logs the real,
+independently-verifiable mainnet transaction for that exact step — click a
+logged link to see it on Voyager. The two rejection steps are labeled as
+proven in the test suite, not live, and say so in the log.
+
+**Verify any of those hashes yourself, no trust required:** go to `/verify`,
+click "try the most recent recorded transaction" (or paste any hash from
+[Evidence Ledger](./docs/EVIDENCE_LEDGER.md)), and it re-reads the receipt
+from a mainnet RPC in your own browser — not a replay of anything recorded
+here. The same check runs from the command line:
+`node --experimental-strip-types scripts/verify-mainnet.ts <hash>`.
+
+**Live mode with a real wallet:** requires a Ready wallet on Starknet mainnet
+with STRK for fees and its one-time "Enable private tokens" setup done (see
+[Wallet Setup](./docs/WALLET_SETUP.md)). Switch mode to live, connect, and
+work through the same steps for real — each is a real mainnet transaction.
+Bank B's duplicate-claim check and the second-adapter check stay read-only in
+live mode too: Ready's paymaster refuses to sponsor a call it predicts will
+revert, so neither can currently be captured as a live rejected transaction
+through the sponsored wallet path (see [Friction Log](./docs/FRICTION_LOG.md),
+"Still open"). `scripts/submit-self-paid-claim.ts` documents the path to
+close that gap - submitting a wallet-built proof directly through a plain,
+non-wallet account with explicit resource bounds - started but not completed.
+
 ## Documentation
 
 - [Evidence Ledger](./docs/EVIDENCE_LEDGER.md) — explicit claim statuses,
