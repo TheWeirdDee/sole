@@ -1,160 +1,98 @@
 # Friction Log
 
-The real problems hit building Sole against STRK20 and Starknet mainnet,
-in the order they surfaced. Each entry: what happened, what was tried, and
-where it actually landed. Nothing here is smoothed over — several of these
-cost real STRK on failed mainnet attempts before the actual cause was found.
+This is a record of observed integration problems, not a list of guarantees.
+Each item says what was found and what the repository now does about it.
 
-## Toolchain
+## Toolchain and deployment
 
-**`snforge` 0.63.0's Cairo test plugin fails to build**, on native Windows
-and on a clean Ubuntu CI runner alike, because a transitive dependency
-declares an `extern` ABI the plugin's build doesn't support.
-*Resolution:* pinned `snforge_std` to `0.62.1` in `contracts/Scarb.toml` and
-CI, which avoids the broken dependency entirely.
+**The 0.63.0 Cairo test-toolchain path failed during plugin/dependency
+compilation.** The failure involved an unsupported transitive `extern` ABI
+reported while the compiler evaluated type size. **Resolution:** the project
+pins the compatible test dependency in `contracts/Scarb.toml`. Re-run
+`cd contracts && snforge test` in an environment with that toolchain before
+claiming a fresh pass.
 
-## Wallet API integration
+**Universal-deployer construction changed `get_caller_address()`.** A
+registry deployed through the universal deployer sees that deployer contract,
+not the submitting account, as its constructor caller. **Resolution:** the
+registry constructor accepts the intended deployer explicitly and the one-time
+anonymizer initialization checks that stored address.
 
-**A bare install of `starknet` resolves to a version without the STRK20
-Wallet API at all.** `npm install starknet` pulled the `latest` dist-tag,
-which lacked `WalletAccountV6`, `strk20InvokeTransaction`, and
-`STRK20_ACTION`. *Resolution:* pinned `starknet@^10.4.0` explicitly, and
-`get-starknet-core` to a version whose `createStore()` returns wallets
-already in Wallet Standard shape — the older `getAvailableWallets()`/
-`enable()` pair returns a shape `WalletAccountV6.connect()` can't consume.
+**The deployed second adapter does not report a distinct venue address.** Both
+configured adapters share the registry, but the live `venue()` read resolves
+to the registry address rather than the adapter address. **Resolution:** the
+app now checks this before describing a result as cross-venue and refuses to
+present the current configuration as independent-venue evidence. A redeploy
+and fresh verification are required.
 
-**The Wallet API's FELT type rejects zero-padded hex.** It's specced as
-`^0x(0|[a-fA-F1-9]{1}[a-fA-F0-9]{0,62})$` — no leading zero digits — unlike
-the padded addresses `sncast`/block explorers display and this repo's own
-`deployment.json` stores. Submitting a padded address through
-`strk20InvokeTransaction` fails with `INVALID_REQUEST_PAYLOAD`, even though
-the identical address works fine through a plain `account.execute()`.
-*Resolution:* every felt reaching the wallet is normalized through
-`normalizeFelt()` first, not just the addresses known to be padded today.
+## Wallet route
 
-**A bare invoke-only actions array is rejected outright.** Every documented
-`privacy_invoke` example pairs the invoke with a real value-moving action
-(withdraw/deposit/transfer); an invoke sent alone fails wallet-side payload
-validation before it ever reaches proving. *Resolution:* every
-`privacy_invoke` call is paired with a small deposit (2x the pool's current
-fee) into the caller's own private balance — it moves value nowhere but
-back to them, and rolls back atomically if the invoke reverts.
+**The privacy route is browser-wallet-only.** The app uses an injected wallet
+and its Wallet API; a headless backend cannot reproduce a user wallet's
+private-action flow. **Resolution:** the SDK exposes that route explicitly and
+the app does not pretend a server can complete it for a user.
 
-**`NOT_REGISTERED` (Wallet API code 118) on an account's first-ever STRK20
-use**, despite the spec describing pool registration as "transparent."
-Ready does not register inline on a combined deposit+invoke for a new
-account. *Resolution:* the wallet's own one-time "Enable private tokens"
-step (documented in `docs/WALLET_SETUP.md`) must be completed by the
-account owner before any private action; Sole does not attempt to
-paper over this with an automatic setup transaction.
+**Wallet API felt formatting is stricter than ordinary account calls.** A
+zero-padded hexadecimal felt can be rejected during wallet preparation even
+when a normal account call accepts it. **Resolution:** values sent to the
+wallet are normalized through `normalizeFelt()`.
 
-## The dropped invoke — the longest-running one
+**Standalone invoke behavior was overgeneralized from an earlier observation.**
+An earlier wallet/action shape rejected a bare invoke before submission; that
+does not prove standalone invoke is universally invalid or that a deposit is
+required. **Resolution:** the current default is one invoke action. A
+deposit-plus-invoke shape is an explicit, user-reviewed compatibility option
+only. The recorded private receipts use that older shape, so they do not prove
+the default bare-invoke path has landed on mainnet.
 
-**A combined deposit+invoke transaction could confirm successfully
-(`SUCCEEDED`, no revert) while the wallet silently omitted the invoke from
-what it actually submitted** — verified by decoding the raw on-chain
-calldata: the target contract address was simply absent. The deposit still
-charged real STRK. This looked, for a long stretch, like `finance()`
-specifically was blocked — repeatable, generic wallet error, no Cairo
-revert reason.
+**A combined deposit-plus-invoke receipt could succeed while omitting the
+invoke.** Decoding an observed transaction showed a deposit without the target
+anonymizer call. **Resolution:** state-changing SDK calls check the exact
+expected registry or adapter event; a successful wallet response alone is not
+accepted as a successful protocol action.
 
-**A related false positive**: `waitForTransaction()` does not throw on a
-reverted transaction by default (its `errorStates` option defaults to
-empty — it only watches finality, not execution outcome). A genuine Cairo
-revert and a silently-dropped invoke both surfaced identically if only
-checked for "no matching event, empty receipt.events." An early fix
-conflated the two, misreading a real revert (e.g. `AUTH_NONCE_MISMATCH`) as
-"dropped" and retrying with the invoke sent alone — which fails wallet-side
-payload validation on its own regardless. *Resolution:* check
-`execution_status` first; a real revert throws immediately with the actual
-Cairo reason instead of being treated as ambiguous.
+**A wallet timeout is outcome-ambiguous.** The extension can submit a request
+but fail to return the hash to the page. **Resolution:** the UI preserves the
+local claim intent, offers a read-only reconciliation, and never automatically
+retries a paid request.
 
-**Automatic retry made it worse.** Firing a second
-`strk20InvokeTransaction` immediately back-to-back with a suspected-dropped
-first attempt produced its own wallet/paymaster-level failures
-(`PaymasterV2Error` code 156, no transaction ever submitted), with account
-balance ruled out as the cause. The rapid back-to-back pair was the likely
-trigger, not anything in the calldata. *Resolution:* the SDK no longer
-retries a privacy invocation inline, ever — a caller must reconcile the
-registry's actual on-chain state before deciding whether another action is
-safe.
+**Back-to-back private actions can fail before submission.** A later proof may
+not yet see the previous state in its proof base. **Resolution:** the app waits
+11 L2 blocks after each confirmed state-changing action before enabling the
+dependent one.
 
-**A self-paid "bypass the paymaster" path was built on a misreading of the
-Wallet API and never worked.** `SoleClient.financeSelfPaid()` /
-`claimSelfPaid()` called `account.executeWithProof(call, proof)` on the
-*connected* wallet account, on the theory that this would submit the
-wallet-prepared `{call, proof}` pair without the wallet's own paymaster
-sponsorship. In fact `executeWithProof()` still routes through the wallet's
-own submission channel (`addInvokeTransaction`, same as every other wallet
-call) — it is not a bypass at all, and its documented calling convention
-takes the caller's *own* built contract calls (e.g.
-`myContract.populate('claim')`) plus a separately-obtained proof, not the
-`call` object `strk20PrepareInvoke` returns. The actual documented
-self-paid pattern requires a completely separate, key-holding `Account`
-(a "sponsor account," in the SDK's own terminology) submitting via a plain
-`execute()` — a real architecture change for an app that otherwise never
-holds a private key, not attempted here. *Resolution:* the broken methods
-and their UI buttons were removed rather than fixed to look like they work.
+**The sponsor rejects calls it predicts will revert.** A duplicate claim or a
+non-ACTIVE adapter call can produce a preflight `PaymasterV2Error` without a
+transaction hash. **Resolution:** the negative-path controls read the public
+precondition instead of repeatedly opening paid wallet prompts. That protects
+funds but means there is no recorded mainnet rejection receipt.
 
-**The actual root cause, once found, was upstream of the wallet entirely.**
-`SoleClient`'s own `state_of()` decoder treated the registry's Cairo enum
-return — a `CairoCustomEnum` shaped like `{variant: {Active: {}}}` — as a
-plain number. `Number()` on that object is `NaN`, which silently fell back
-to `UNCLAIMED` regardless of the right's real on-chain state. This meant a
-genuinely successful claim, and later a genuinely successful `finance()`
-and `settleAndRepay()`, could read back as failures indefinitely — not
-because the invoke was dropped, but because the reader was lying, including
-to earlier debugging attempts on this exact project that concluded specific
-claims had failed when they had, in fact, succeeded. *Resolution:*
-`decodeRightState()` now decodes the actual enum variant (covered by
-tests), and every state-changing call now verifies the *exact* expected
-event (`hasExactRightClaim`/`hasExactRightRegistration`) rather than
-trusting decoded state at all.
+**A connected-wallet self-paid bypass was not a bypass.** The former path
+still used the wallet submission channel and did not create a separate
+key-holding sender. **Resolution:** it was removed. A true self-paid design
+would require a separate funded account and is not silently added to this
+wallet-only app.
 
-**Dependent private actions submitted back-to-back can fail for reasons
-indistinguishable from a paymaster refusal.** Ready's own zero-knowledge
-proof is built against an anchored, already-final chain snapshot; state a
-prior transaction just wrote may not yet be old enough (~10-11 L2 blocks)
-to be included in that snapshot. Submitting `finance()` immediately after
-`claim()` confirmed could fail for this reason alone, with no way from the
-app side to distinguish it from any other wallet-side rejection.
-*Resolution:* the app now waits until the L2 head is 11 blocks past the
-preceding state-changing transaction before enabling the next private
-action, and documents this explicitly rather than presenting it as
-instant.
+## State, evidence, and infrastructure
 
-## Infrastructure
+**The SDK initially decoded the Cairo state enum as a number.** The custom enum
+read became `NaN` and fell back to `UNCLAIMED`, making successful transitions
+look failed. **Resolution:** `decodeRightState()` handles the enum shape and
+transition calls check exact expected events.
 
-**`waitForTransaction({ retries: N })` does not bound a hung RPC fetch.**
-The retry count only helps if each individual poll actually resolves or
-rejects; a single fetch to a public RPC node that never responds at all —
-no error, no timeout — leaves the retry counter frozen on its first
-attempt, hanging the UI indefinitely regardless of the configured retry
-budget. *Resolution:* added a real `withTimeout()` (a `Promise.race`
-against an actual timer) wrapping every wait, independent of what the
-underlying library or RPC does.
+**Receipt facts were being described too broadly.** The live `Financed` and
+`Repaid` events prove the fallback adapter recorded then cleared an opaque
+position. The adapter source does not transfer tokens or call an external
+market. **Resolution:** the app and evidence ledger now name that bookkeeping
+precisely rather than calling it financing, lending, or repayment.
 
-**The public Lava RPC endpoint stopped serving.**
-`https://rpc.starknet.lava.build`, used as the app's default fallback,
-began returning HTTP 410 Gone — confirmed live via a direct request, not
-assumed. This silently broke the app's own provider (reads, receipt
-reconciliation) independent of anything wallet-related, since it's a
-different RPC connection than the one Ready itself uses. *Resolution:*
-repointed the fallback to `https://starknet-rpc.publicnode.com`, confirmed
-responding.
+**Public pool deposits materially narrow the privacy story.** Recorded private
+receipts join a public indexed 12 STRK deposit, anonymizer invocation, and
+Sole slot in one transaction. **Resolution:** wallet unlinkability was removed
+from the claims; [`PRIVACY_BOUNDARY.md`](./PRIVACY_BOUNDARY.md) is the single
+source of truth.
 
-## Still open
-
-**A live, on-chain reverted transaction for duplicate-claim refusal or
-cross-venue refusal has not been captured**, and may not be reachable
-through the sponsored wallet path at all. Ready's paymaster runs its own
-pre-flight simulation and refuses to sponsor gas for a call it predicts
-will revert — which is exactly what a duplicate claim or a finance call
-against a consumed right is expected to do. This is standard,
-cost-saving paymaster behavior, not a Sole defect, but it means the
-specific on-chain artifact these two invariants would produce cannot be
-generated through the connected wallet as currently architected. The
-invariants remain proven in the adversarial test suite; see
-[`NON_CLAIMS.md`](./NON_CLAIMS.md) item 5. The only documented route past
-this is the separate-sponsor-account self-paid pattern above, not yet
-built.
+**A public RPC endpoint stopped responding.** A former fallback returned HTTP
+410, leaving receipt waits hung independently of the wallet. **Resolution:**
+the app uses a current public endpoint by default and wraps waits in an actual
+timeout.

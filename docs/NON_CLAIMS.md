@@ -1,46 +1,46 @@
 # Non-Claims
 
-What Sole does not do, stated plainly rather than left implicit. Read alongside
-[`PRIVACY_BOUNDARY.md`](./PRIVACY_BOUNDARY.md), which is the single source of
-truth for privacy-specific claims — the two privacy-related entries below
-summarize it, they do not replace it.
+What Sole does not do, stated plainly rather than left implicit. Read
+[`PRIVACY_BOUNDARY.md`](./PRIVACY_BOUNDARY.md) for the authoritative privacy
+boundary; this list does not broaden it.
 
-1. **Sole does not prove a real-world receivable exists.** A canonical id is
-   an arbitrary reference string. The registry enforces exclusivity over
-   whatever claims that id; it has no way to check the underlying financial
-   right is real, and does not attempt to.
-2. **Sole does not hide that a known right is active.** Anyone holding a
-   canonical id can query its state (`UNCLAIMED` / `ACTIVE` / `CONSUMED`).
-   Privacy is over the relationship behind that state — the claimant, the
-   amount, the counterparty — never over the state itself.
-3. **Sole does not hide timing, or that a state transition happened.**
-   Transaction timestamps and the fact that some transition occurred are
-   public by construction of a public blockchain. What stays hidden is
-   *who* and *how much*, not *when* or *whether*.
-4. **The canonical-id-to-right mapping is first-registration-wins, not
-   attested.** The shipped `FirstRegistrationRoot` assumes the first party
-   to register a given id is entitled to. Production use needs an
-   attester-signed root behind the same `RightRoot` trait; nothing here
-   proves ownership of the underlying right independent of who registered
-   first.
-5. **`finance()` and `settleAndRepay()` are proven on mainnet; the two
-   rejection paths are not.** A live duplicate claim and a live cross-venue
-   refusal are both proven in the adversarial test suite
-   (`second_claim_on_active_right_reverts`,
-   `second_venue_refuses_a_consumed_right`), but neither has landed as a
-   real, independently-verified mainnet transaction yet. Ready's paymaster
-   refuses to sponsor gas for a call it predicts will revert, which is the
-   specific reason a live rejection has been hard to capture through the
-   sponsored wallet route — see [`FRICTION_LOG.md`](./FRICTION_LOG.md).
-6. **Sole does not implement `EXPIRED`, `CANCELLED`, or
+1. **Sole does not prove a real-world right exists.** A canonical id is an
+   arbitrary reference string. The registry enforces exclusivity over that
+   string; it cannot validate the underlying receivable, licence, allocation,
+   or collateral claim.
+2. **Sole does not hide whether a known right is active.** Anyone holding a
+   canonical id can derive its slot and query `UNCLAIMED`, `ACTIVE`, or
+   `CONSUMED`.
+3. **Sole does not provide transaction-level wallet unlinkability in the
+   recorded bundled flow.** Each recorded private receipt publicly joins an
+   indexed 12 STRK pool deposit, the anonymizer invocation, and the Sole slot.
+   The registry caller is the anonymizer; the depositing wallet can still be
+   correlated with that slot. Timing, contracts called, and transaction fees
+   are public too.
+4. **Sole does not prove a named claimant, raw amount, or counterparty can
+   never be inferred from all available data.** Registry events omit those
+   fields, but wallet, provider, timing, calldata, and off-chain correlation
+   are outside that narrow event-field fact.
+5. **Sole does not demonstrate real financing, credit issuance, asset
+   transfer, external-market integration, or economic repayment.** The
+   deployed `FallbackMarket` records an opaque position commitment and clears
+   it on consume. Its `Financed` and `Repaid` events prove that bookkeeping,
+   not a loan.
+6. **Sole does not have a recorded mainnet duplicate-claim or cross-venue
+   rejection receipt.** `RIGHT_ALREADY_ACTIVE` and
+   `AUTH_RIGHT_NOT_ACTIVE` are covered by the adversarial tests. The sponsored
+   wallet path avoids funding calls it predicts will revert. The deployed
+   second adapter also does not currently prove an independent venue
+   configuration.
+7. **Sole does not implement scoped disclosure, counterparty access control,
+   or auditor keys.** The UI projections are illustrative local views, not
+   deployed access-control features.
+8. **The canonical-id-to-right mapping is first-registration-wins, not
+   attested.** Production use needs a trusted attester or equivalent root;
+   the shipped `FirstRegistrationRoot` does not establish entitlement.
+9. **Sole does not implement `EXPIRED`, `CANCELLED`, or
    `PARTIALLY_SETTLED`.** Only `UNCLAIMED -> ACTIVE -> CONSUMED` ships.
-   The other transitions are documented as interface and spec only in
-   [`STATE_MACHINE.md`](./STATE_MACHINE.md), deliberately not implemented
-   before the core three-state machine is proven on mainnet.
-7. **The contracts are unaudited, ownerless, and not upgradeable.** No
-   admin key, no upgrade path. A finding in the deployed contracts means a
-   redeploy to a new address, not a patch. Passing an adversarial test
-   suite is evidence, not an audit.
-8. **This is experimental, hackathon-stage software.** It has not been
-   used to secure a real financial right, has not had meaningful usage at
-   scale, and should not be treated as production-ready infrastructure.
+10. **The contracts are unaudited, ownerless, and not upgradeable.** A
+    finding means a redeploy to a new address, not a patch.
+11. **This is experimental software, not production-ready infrastructure.**
+    No real financial right should rely on it.
