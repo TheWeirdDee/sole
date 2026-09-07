@@ -10,18 +10,22 @@
 //          node --experimental-strip-types scripts/verify-mainnet.ts --all
 //
 // Checks per transaction (mirrors evidence/claims.json):
-//   ok  emitted by the Sole RightsRegistry
+//   ok  emitted by the Sole RightsRegistry, OR by a known ExecutionAdapter for finance
 //   ok  routed via the ClaimAnonymizer (caller == anonymizer, not a raw wallet)
 //   ok  event decodes to a valid transition for its slot_key
 //   ok  for a duplicate-claim rejection: reverted with RIGHT_ALREADY_ACTIVE and moved no state
 //   ok  for a venue rejection (never-active or a different, consumed venue): reverted with
 //       AUTH_RIGHT_NOT_ACTIVE and moved no state
 //   ok  for a settle tx: nullifier newly burned, slot -> CONSUMED
+//   ok  for a finance tx: the adapter emitted Financed (no registry event - finance() never
+//       touches RightsRegistry directly, it reads state_of() as a view call)
 
 import { RpcProvider, hash } from "starknet";
 import { readFileSync } from "node:fs";
 
-const RPC = process.env.STARKNET_RPC ?? "https://rpc.starknet.lava.build";
+// Lava's former public endpoint returns HTTP 410. An explicit STARKNET_RPC
+// still wins, while this fallback supports a fresh local verification run.
+const RPC = process.env.STARKNET_RPC || "https://starknet-rpc.publicnode.com";
 const provider = new RpcProvider({ nodeUrl: RPC });
 
 type Deployment = {
@@ -36,7 +40,13 @@ const SEL = {
   RightRegistered: hash.getSelectorFromName("RightRegistered"),
   RightClaimed: hash.getSelectorFromName("RightClaimed"),
   RightConsumed: hash.getSelectorFromName("RightConsumed"),
+  Financed: hash.getSelectorFromName("Financed"),
+  Repaid: hash.getSelectorFromName("Repaid"),
 };
+
+const adapterAddrs = [deployment.adapter_venue_1, deployment.adapter_venue_2]
+  .filter((a): a is string => Boolean(a))
+  .map((a) => BigInt(a));
 
 function ok(label: string) { console.log(`  ok  ${label}`); }
 function fail(label: string): never { console.error(`  XX  ${label}`); process.exit(1); }
@@ -52,6 +62,9 @@ async function verify(txHash: string) {
   const registryAddr = BigInt(deployment.registry);
   const soleEvents = (receipt.events ?? []).filter(
     (e: any) => e.from_address != null && BigInt(e.from_address) === registryAddr,
+  );
+  const adapterEvents = (receipt.events ?? []).filter(
+    (e: any) => e.from_address != null && adapterAddrs.some((a) => BigInt(e.from_address) === a),
   );
 
   if (reverted) {
@@ -72,8 +85,11 @@ async function verify(txHash: string) {
     fail(`reverted for an unexpected reason: ${reason}`);
   }
 
-  if (soleEvents.length === 0) fail("no Sole RightsRegistry event in this transaction");
-  ok("emitted by the Sole RightsRegistry");
+  if (soleEvents.length === 0 && adapterEvents.length === 0) {
+    fail("no Sole RightsRegistry or ExecutionAdapter event in this transaction");
+  }
+  if (soleEvents.length > 0) ok("emitted by the Sole RightsRegistry");
+  else ok("emitted by a known Sole ExecutionAdapter (finance() reads state_of() as a view call, no registry event)");
 
   // The caller into the registry must be the anonymizer, never a raw wallet.
   // Compare the unpadded hex form, since RPC responses may drop the leading
@@ -85,9 +101,18 @@ async function verify(txHash: string) {
   else fail("transaction did not route through the ClaimAnonymizer");
 
   const kinds = soleEvents.map((e: any) => e.keys?.[0]);
+  const adapterKinds = adapterEvents.map((e: any) => e.keys?.[0]);
   if (kinds.includes(SEL.RightClaimed)) { ok("decodes to claim -> ACTIVE"); return { kind: "claim", txHash }; }
-  if (kinds.includes(SEL.RightConsumed)) { ok("decodes to settle -> CONSUMED"); return { kind: "settle", txHash }; }
+  if (kinds.includes(SEL.RightConsumed)) {
+    ok("decodes to settle -> CONSUMED");
+    if (adapterKinds.includes(SEL.Repaid)) ok("adapter also emitted Repaid (settle_and_repay: venue repaid atomically)");
+    return { kind: "settle", txHash };
+  }
   if (kinds.includes(SEL.RightRegistered)) { ok("decodes to register -> UNCLAIMED"); return { kind: "register", txHash }; }
+  if (adapterKinds.includes(SEL.Financed)) {
+    ok("adapter emitted Financed -> financing executed against an ACTIVE right");
+    return { kind: "finance", txHash };
+  }
   fail("no recognized Sole transition in the emitted events");
 }
 
