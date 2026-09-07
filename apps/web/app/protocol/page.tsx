@@ -18,7 +18,7 @@ export default function Protocol() {
     <main style={wrap}>
       <div style={eyebrow}>Protocol</div>
       <h1 style={{ fontSize: 34, fontWeight: 600, letterSpacing: "-.015em", margin: 0 }}>
-        One right, one financing, consumed once — the machine underneath.
+        One right, one gated adapter action, consumed once — the machine underneath.
       </h1>
 
       <h2 style={{ fontSize: 22, fontWeight: 600, margin: "34px 0 12px" }}>Shipped states</h2>
