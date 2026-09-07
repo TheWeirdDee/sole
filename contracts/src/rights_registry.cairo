@@ -48,9 +48,9 @@ pub trait IRightsRegistry<TContractState> {
     /// deterministic so any party can compute it and collide.
     fn register_right(ref self: TContractState, slot_key: felt252);
 
-    /// Acquire the exclusive claim. `claim_commitment` is the private
-    /// ownership record Poseidon(TAG_CLAIM, slot_key, claimant_secret,
-    /// funding_note); the registry never learns its pre-image. Reverts with
+    /// Acquire the exclusive claim. `claim_commitment` is an opaque public
+    /// commitment Poseidon(TAG_CLAIM, slot_key, claimant_secret, funding_note);
+    /// the registry never learns its pre-image. Reverts with
     /// 'RIGHT_ALREADY_ACTIVE' if the slot is already claimed - this revert is
     /// the demonstrated invariant.
     fn claim(ref self: TContractState, slot_key: felt252, claim_commitment: felt252);
@@ -90,7 +90,8 @@ pub mod RightsRegistry {
         // nullifier -> spent
         nullifiers: Map<felt252, bool>,
         // only the anonymizer may drive transitions, so the raw claiming
-        // wallet is never the msg.sender the registry records.
+        // wallet is never the msg.sender the registry records. This does not
+        // imply wallet unlinkability at the transaction-receipt layer.
         anonymizer: ContractAddress,
         // who deployed this registry - the only address initialize_anonymizer
         // will accept a call from. Set once at construction, read-only after.
