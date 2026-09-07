@@ -8,8 +8,8 @@
 // publicly correlated with the same receipt's registry transition.
 //
 // This is a standard STRK20 anonymizer helper: the pool calls it through the
-// same privacy_invoke seam as every other helper (Swap, Vesu, Escrow) - one
-// entry point, named privacy_invoke, dispatched by an operation argument,
+// same privacy_invoke seam as compatible helper contracts: one entry point,
+// named privacy_invoke, dispatched by an operation argument,
 // called via the pool's INVOKE_SELECTOR once it has proved the wallet's
 // private action. The registry only ever sees the anonymizer as caller; the
 // wallet never appears as the RightsRegistry caller.
