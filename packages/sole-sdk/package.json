@@ -1,7 +1,7 @@
 {
   "name": "@sole/sdk",
   "version": "0.1.0",
-  "description": "Sole - privacy-preserving exclusivity for economic rights on STRK20",
+  "description": "Sole - wallet-routed single-use execution-right client",
   "license": "Apache-2.0",
   "type": "module",
   "main": "src/index.ts",
