@@ -1,19 +1,43 @@
 # Co-design & Operational Analysis
 
-Sole's demo vertical (duplicate invoice financing) is grounded in a real operational problem in trade credit and receivable discounting.
+The duplicate-receivable scenario is a fixture for evaluating a narrow
+technical property: whether a known reference can move only once through a
+public state machine. It is not evidence of a deployed trade-finance product,
+of the frequency or cost of duplicate financing, or of institutional adoption.
 
-## The Operational Problem
-In trade finance and SME invoice discounting, duplicate financing (double-pledging the same receivable to multiple factoring houses) accounts for significant credit losses globally. Lenders currently have no trust-minimized mechanism to verify whether an asset has already been pledged to another factoring house.
+## The Design Question
 
-Today, this is handled through manual phone checks, bilateral confirmations, or court filings. Centralized public registries fail in practice because financial institutions fiercely protect their loan books—no bank wants competing lenders to see which clients they are funding, the discount margins, or transaction volumes. Consequently, duplicate pledging remains an unhedged fraud risk that banks price directly into higher interest rates for SMEs.
+A registry can expose whether a known reference is `UNCLAIMED`, `ACTIVE`, or
+`CONSUMED` while keeping the registry's claim payload to an opaque commitment.
+That creates a useful technical tension, but it does not establish the
+existence, ownership, or enforceability of the underlying receivable.
 
-## The Design Requirement
-To be adopted by distrusting financial institutions, a fraud-prevention rail must satisfy two opposing constraints:
-1. **Public Exclusivity:** Any lender must be able to verify that a receivable is not currently active or consumed, and duplicate claims must reliably revert on-chain (`RIGHT_ALREADY_ACTIVE`).
-2. **Confidential Deal Flow:** The lender identity, loan amount, and borrower relationship must remain strictly private.
+## What the Shipped System Demonstrates
 
-## What Changed in Sole's Architecture
-Because institutional lenders will actively avoid any registry that exposes their client book or financing amounts, Sole separates the enforcement state from the economic relationship:
-1. The registry tracks only `slot_key -> state -> commitment`. Exclusivity is enforced globally across all venues.
-2. The claimant identity and funding note remain shielded inside the STRK20 privacy pool.
-3. The lending market (`ExecutionAdapter`) gates financing behind an active, single-use `ExecAuth`, preventing double-disbursement without exposing who holds the right.
+1. **Public state gating:** The registry records `slot_key -> state -> opaque
+   commitment`. A fresh claim against an ACTIVE slot is rejected by source and
+   adversarial tests with `RIGHT_ALREADY_ACTIVE`.
+2. **Narrow event-field privacy:** Registry events do not contain named
+   claimant, raw position amount, or counterparty fields. That is not an
+   anonymity guarantee: the recorded bundled receipts correlate the depositing
+   wallet, a public pool deposit, the anonymizer invocation, and the slot.
+3. **Fallback position bookkeeping:** The deployed `FallbackMarket` records
+   and later clears an opaque position commitment after an active `ExecAuth`.
+   It does not transfer assets, issue credit, connect to an external market, or
+   prove economic repayment.
+
+## Boundaries of the Demonstration
+
+- The single-use gate is demonstrated on the deployed registry and in
+  adversarial tests. There is no recorded mainnet duplicate-claim rejection.
+- `(shared-registry adapter, non-ACTIVE) --finance--> REVERT
+  AUTH_RIGHT_NOT_ACTIVE` is a source-and-test property. The deployed second
+  adapter does not currently prove an independent venue configuration, and
+  there is no recorded mainnet cross-venue rejection.
+- The canonical id is first-registration-wins. A production workflow would
+  require a trusted attester or another entitlement root before treating a
+  reference as a real-world right.
+
+Read [`docs/PRIVACY_BOUNDARY.md`](./docs/PRIVACY_BOUNDARY.md) and
+[`docs/NON_CLAIMS.md`](./docs/NON_CLAIMS.md) before using the demo as evidence
+for any commercial claim.
