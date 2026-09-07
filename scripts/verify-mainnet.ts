@@ -1,40 +1,46 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Sole - verify-mainnet
-// Reconstructs each claim from chain data and refuses any hash whose events do
-// not prove the mechanism. Nothing here is self-reported: the script re-reads
-// the receipt, checks the emitting contract, decodes the event, and asserts the
-// state transition it must represent.
+// Reconstructs the recorded evidence ledger from live chain data. The ledger
+// provides expected facts; this script obtains every receipt again and fails
+// when a current read disagrees. It deliberately reports the public pool
+// deposit separately from the receipt's actual L2 fee and pool withdrawal.
 //
-//   usage: node --experimental-strip-types scripts/verify-mainnet.ts <tx_hash>
-//          node --experimental-strip-types scripts/verify-mainnet.ts --all
-//
-// Checks per transaction (mirrors evidence/claims.json):
-//   ok  emitted by the Sole RightsRegistry, OR by a known ExecutionAdapter for finance
-//   ok  routed via the ClaimAnonymizer (caller == anonymizer, not a raw wallet)
-//   ok  event decodes to a valid transition for its slot_key
-//   ok  for a duplicate-claim rejection: reverted with RIGHT_ALREADY_ACTIVE and moved no state
-//   ok  for a venue rejection (never-active or a different, consumed venue): reverted with
-//       AUTH_RIGHT_NOT_ACTIVE and moved no state
-//   ok  for a settle tx: nullifier newly burned, slot -> CONSUMED
-//   ok  for a finance tx: the adapter emitted Financed (no registry event - finance() never
-//       touches RightsRegistry directly, it reads state_of() as a view call)
+// usage:
+//   node --experimental-strip-types scripts/verify-mainnet.ts <tx_hash>
+//   node --experimental-strip-types scripts/verify-mainnet.ts --all
 
 import { RpcProvider, hash } from "starknet";
 import { readFileSync } from "node:fs";
 
-// Lava's former public endpoint returns HTTP 410. An explicit STARKNET_RPC
-// still wins, while this fallback supports a fresh local verification run.
 const RPC = process.env.STARKNET_RPC || "https://starknet-rpc.publicnode.com";
 const provider = new RpcProvider({ nodeUrl: RPC });
+const UNIT = 1_000_000_000_000_000_000n;
 
 type Deployment = {
-  registry: string; anonymizer: string; pool: string;
-  adapter_venue_1?: string; adapter_venue_2?: string;
+  registry: string;
+  anonymizer: string;
+  pool: string;
+  adapter_venue_1?: string;
+  adapter_venue_2?: string;
 };
+
+type LedgerTransaction = {
+  hash: string;
+  kind?: string;
+  block_number?: number;
+  expected_event?: string;
+  actual_fee_fri?: string;
+  pool_deposit_fri?: string | null;
+  pool_fee_withdrawal_fri?: string | null;
+};
+
 const deployment: Deployment = JSON.parse(
   readFileSync(new URL("../evidence/deployment.json", import.meta.url), "utf8"),
 );
+const ledger = JSON.parse(
+  readFileSync(new URL("../evidence/claims.json", import.meta.url), "utf8"),
+) as { transactions: LedgerTransaction[] };
 
 const SEL = {
   RightRegistered: hash.getSelectorFromName("RightRegistered"),
@@ -42,89 +48,146 @@ const SEL = {
   RightConsumed: hash.getSelectorFromName("RightConsumed"),
   Financed: hash.getSelectorFromName("Financed"),
   Repaid: hash.getSelectorFromName("Repaid"),
+  Deposit: hash.getSelectorFromName("Deposit"),
+  Withdrawal: hash.getSelectorFromName("Withdrawal"),
+  ExternalContractInvoked: hash.getSelectorFromName("ExternalContractInvoked"),
+  PrivacyInvoke: hash.getSelectorFromName("privacy_invoke"),
 };
 
 const adapterAddrs = [deployment.adapter_venue_1, deployment.adapter_venue_2]
-  .filter((a): a is string => Boolean(a))
-  .map((a) => BigInt(a));
+  .filter((address): address is string => Boolean(address))
+  .map((address) => BigInt(address));
 
 function ok(label: string) { console.log(`  ok  ${label}`); }
 function fail(label: string): never { console.error(`  XX  ${label}`); process.exit(1); }
 
-async function verify(txHash: string) {
-  console.log(`\nverifying ${txHash}`);
-  const receipt: any = await provider.getTransactionReceipt(txHash);
+function sameFelt(a: unknown, b: unknown): boolean {
+  try { return BigInt(a as string) === BigInt(b as string); } catch { return false; }
+}
 
-  const reverted = receipt.execution_status === "REVERTED";
-  // BigInt, not string, comparison: RPC responses drop leading zero padding
-  // (0x57a4... vs the stored 0x057a4...), so a naive string match silently
-  // finds nothing.
-  const registryAddr = BigInt(deployment.registry);
-  const soleEvents = (receipt.events ?? []).filter(
-    (e: any) => e.from_address != null && BigInt(e.from_address) === registryAddr,
-  );
-  const adapterEvents = (receipt.events ?? []).filter(
-    (e: any) => e.from_address != null && adapterAddrs.some((a) => BigInt(e.from_address) === a),
-  );
+function formatFri(value: unknown): string {
+  const amount = BigInt(value as string);
+  const whole = amount / UNIT;
+  const remainder = (amount % UNIT).toString().padStart(18, "0").replace(/0+$/, "");
+  return remainder ? `${whole}.${remainder} STRK` : `${whole} STRK`;
+}
 
-  if (reverted) {
-    // A rejection is a first-class evidence artifact: it must have moved no state.
+function expectedEventPresent(entry: LedgerTransaction, registryEvents: any[], adapterEvents: any[]): boolean {
+  const registryKinds = registryEvents.map((event) => event.keys?.[0]);
+  const adapterKinds = adapterEvents.map((event) => event.keys?.[0]);
+  switch (entry.expected_event) {
+    case "RightRegistered": return registryKinds.includes(SEL.RightRegistered);
+    case "RightClaimed": return registryKinds.includes(SEL.RightClaimed);
+    case "Financed": return adapterKinds.includes(SEL.Financed);
+    case "RightConsumed + Repaid":
+      return registryKinds.includes(SEL.RightConsumed) && adapterKinds.includes(SEL.Repaid);
+    default: return registryEvents.length > 0 || adapterEvents.length > 0;
+  }
+}
+
+async function verify(entry: LedgerTransaction) {
+  console.log(`\nverifying ${entry.hash}`);
+  const receipt: any = await provider.getTransactionReceipt(entry.hash);
+  if (receipt.execution_status === "REVERTED") {
     const reason = receipt.revert_reason ?? "";
-    if (reason.includes("RIGHT_ALREADY_ACTIVE")) {
-      ok("reverted with RIGHT_ALREADY_ACTIVE (duplicate claim refused)");
-      if (soleEvents.length === 0) ok("no state-changing event emitted (fail-closed)");
-      else fail("rejected tx unexpectedly emitted a registry event");
-      return { kind: "rejection", txHash };
-    }
-    if (reason.includes("AUTH_RIGHT_NOT_ACTIVE")) {
-      ok("reverted with AUTH_RIGHT_NOT_ACTIVE (venue refused a right that isn't ACTIVE)");
-      if (soleEvents.length === 0) ok("no state-changing event emitted (fail-closed)");
-      else fail("rejected tx unexpectedly emitted a registry event");
-      return { kind: "venue-rejection", txHash };
+    if (reason.includes("RIGHT_ALREADY_ACTIVE") || reason.includes("AUTH_RIGHT_NOT_ACTIVE")) {
+      ok(`expected rejection: ${reason}`);
+      const registryEvents = (receipt.events ?? []).filter(
+        (event: any) => event.from_address != null && sameFelt(event.from_address, deployment.registry),
+      );
+      if (registryEvents.length === 0) ok("no registry state-changing event emitted");
+      else fail("rejected transaction unexpectedly emitted a registry event");
+      return;
     }
     fail(`reverted for an unexpected reason: ${reason}`);
   }
 
-  if (soleEvents.length === 0 && adapterEvents.length === 0) {
-    fail("no Sole RightsRegistry or ExecutionAdapter event in this transaction");
+  if (receipt.execution_status !== "SUCCEEDED") {
+    fail(`execution status is ${receipt.execution_status ?? "missing"}, not SUCCEEDED`);
   }
-  if (soleEvents.length > 0) ok("emitted by the Sole RightsRegistry");
-  else ok("emitted by a known Sole ExecutionAdapter (finance() reads state_of() as a view call, no registry event)");
+  ok(`SUCCEEDED; finality ${receipt.finality_status ?? "not returned"}`);
 
-  // The caller into the registry must be the anonymizer, never a raw wallet.
-  // Compare the unpadded hex form, since RPC responses may drop the leading
-  // zero padding sncast/deployment.json use.
-  const tx: any = await provider.getTransaction(txHash);
-  const anonymizerUnpadded = BigInt(deployment.anonymizer).toString(16);
-  const touchesAnonymizer = JSON.stringify(tx).toLowerCase().includes(anonymizerUnpadded);
-  if (touchesAnonymizer) ok("routed via the ClaimAnonymizer (claimant wallet unlinked)");
-  else fail("transaction did not route through the ClaimAnonymizer");
+  if (entry.block_number !== undefined) {
+    if (Number(receipt.block_number) === entry.block_number) ok(`block ${entry.block_number}`);
+    else fail(`block ${receipt.block_number} differs from ledger block ${entry.block_number}`);
+  }
 
-  const kinds = soleEvents.map((e: any) => e.keys?.[0]);
-  const adapterKinds = adapterEvents.map((e: any) => e.keys?.[0]);
-  if (kinds.includes(SEL.RightClaimed)) { ok("decodes to claim -> ACTIVE"); return { kind: "claim", txHash }; }
-  if (kinds.includes(SEL.RightConsumed)) {
-    ok("decodes to settle -> CONSUMED");
-    if (adapterKinds.includes(SEL.Repaid)) ok("adapter also emitted Repaid (settle_and_repay: venue repaid atomically)");
-    return { kind: "settle", txHash };
+  const feeRaw = receipt.actual_fee?.amount ?? receipt.actual_fee;
+  if (feeRaw == null) fail("receipt has no actual_fee");
+  if (entry.actual_fee_fri && !sameFelt(feeRaw, entry.actual_fee_fri)) {
+    fail(`actual fee ${feeRaw} differs from ledger ${entry.actual_fee_fri}`);
   }
-  if (kinds.includes(SEL.RightRegistered)) { ok("decodes to register -> UNCLAIMED"); return { kind: "register", txHash }; }
-  if (adapterKinds.includes(SEL.Financed)) {
-    ok("adapter emitted Financed -> financing executed against an ACTIVE right");
-    return { kind: "finance", txHash };
+  ok(`actual L2 fee ${formatFri(feeRaw)} (${feeRaw} FRI)`);
+
+  const registryEvents = (receipt.events ?? []).filter(
+    (event: any) => event.from_address != null && sameFelt(event.from_address, deployment.registry),
+  );
+  const adapterEvents = (receipt.events ?? []).filter(
+    (event: any) => event.from_address != null
+      && adapterAddrs.some((address) => sameFelt(event.from_address, address)),
+  );
+  if (!expectedEventPresent(entry, registryEvents, adapterEvents)) {
+    fail(`missing expected Sole event: ${entry.expected_event ?? "recognized registry or adapter event"}`);
   }
-  fail("no recognized Sole transition in the emitted events");
+  ok(`contains ${entry.expected_event ?? "a recognized Sole transition"}`);
+
+  const poolEvents = (receipt.events ?? []).filter(
+    (event: any) => event.from_address != null && sameFelt(event.from_address, deployment.pool),
+  );
+  if (entry.pool_deposit_fri == null) {
+    if (poolEvents.length === 0) ok("no STRK20 pool event, as recorded for direct registration");
+    else fail("unexpected STRK20 pool event in a direct-registration receipt");
+
+    const tx: any = await provider.getTransaction(entry.hash);
+    const anonymizerHex = BigInt(deployment.anonymizer).toString(16);
+    if (JSON.stringify(tx).toLowerCase().includes(anonymizerHex)) {
+      ok("transaction calldata references the configured anonymizer");
+    } else {
+      fail("direct registration transaction does not reference the configured anonymizer");
+    }
+    return;
+  }
+
+  const deposit = poolEvents.find((event: any) => sameFelt(event.keys?.[0], SEL.Deposit));
+  if (!deposit || !sameFelt(deposit.data?.[0], entry.pool_deposit_fri)) {
+    fail(`missing expected public pool Deposit of ${entry.pool_deposit_fri}`);
+  }
+  ok(`public pool Deposit ${formatFri(deposit.data[0])}; depositor is indexed in this receipt`);
+
+  const withdrawal = poolEvents.find((event: any) => sameFelt(event.keys?.[0], SEL.Withdrawal));
+  const withdrawalAmount = withdrawal?.data?.[withdrawal.data.length - 1];
+  if (!withdrawal || !sameFelt(withdrawalAmount, entry.pool_fee_withdrawal_fri)) {
+    fail(`missing expected pool fee withdrawal of ${entry.pool_fee_withdrawal_fri}`);
+  }
+  ok(`pool fee withdrawal ${formatFri(withdrawalAmount)}`);
+
+  const invoke = poolEvents.find((event: any) =>
+    sameFelt(event.keys?.[0], SEL.ExternalContractInvoked)
+    && sameFelt(event.keys?.[1], deployment.anonymizer)
+    && sameFelt(event.keys?.[2], SEL.PrivacyInvoke),
+  );
+  if (!invoke) fail("missing ExternalContractInvoked for configured anonymizer privacy_invoke");
+  ok("pool invoked the configured anonymizer through privacy_invoke");
+  ok("receipt-level public deposit and Sole transition are correlated; wallet unlinkability is not claimed");
 }
 
 async function main() {
   const arg = process.argv[2];
-  if (!arg) { console.error("usage: verify-mainnet.ts <tx_hash> | --all"); process.exit(2); }
-  if (arg === "--all") {
-    const claims = JSON.parse(readFileSync(new URL("../evidence/claims.json", import.meta.url), "utf8"));
-    for (const c of claims.transactions) await verify(c.hash);
-    console.log(`\nverified ${claims.transactions.length} mainnet transactions from chain`);
-  } else {
-    await verify(arg);
+  if (!arg) {
+    console.error("usage: verify-mainnet.ts <tx_hash> | --all");
+    process.exit(2);
   }
+  if (arg === "--all") {
+    for (const entry of ledger.transactions) await verify(entry);
+    console.log(`\nverified ${ledger.transactions.length} ledger transactions from live chain data`);
+    return;
+  }
+  const entry = ledger.transactions.find((candidate) => sameFelt(candidate.hash, arg));
+  if (!entry) {
+    console.error("hash is not in evidence/claims.json; add expected receipt facts before treating it as evidence");
+    process.exit(2);
+  }
+  await verify(entry);
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+
+main().catch((error) => { console.error(error); process.exit(1); });

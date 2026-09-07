@@ -1,82 +1,156 @@
 {
-  "description": "Each claim Sole makes, and the artifact that proves it. Regenerate with scripts/verify-mainnet.ts --all.",
+  "description": "Evidence ledger for Sole. A status is explicit, never inferred from prose. Re-run each claim's regenerate command before treating it as current.",
   "claims": [
     {
       "id": "C-1",
-      "claim": "one active claimant per right",
-      "evidence": "tests/adversarial: full_lifecycle + second_claim_on_active_right_reverts"
+      "status": "proven",
+      "scope": "tests; mainnet affirmative transitions",
+      "claim": "A registered slot has at most one ACTIVE claim commitment.",
+      "evidence": "RightsRegistry stores one state and one active commitment per slot; adversarial tests cover duplicate claims. Recorded mainnet claims emitted RightClaimed.",
+      "regenerate": "cd contracts && snforge test"
     },
     {
       "id": "C-2",
-      "claim": "duplicate claim refused on-chain",
-      "evidence": "tests/adversarial: second_claim_on_active_right_reverts. Ready's sponsored path does not submit intentionally reverting calls, so the live demo verifies the registry's ACTIVE precondition without claiming a mainnet rejected transaction."
+      "status": "pending",
+      "scope": "tests only; no recorded mainnet rejection",
+      "claim": "A second claim of an ACTIVE slot reverts RIGHT_ALREADY_ACTIVE.",
+      "evidence": "tests/adversarial: second_claim_on_active_right_reverts. The sponsored wallet path does not submit intentionally reverting calls, so no mainnet rejection receipt is recorded.",
+      "regenerate": "cd contracts && snforge test"
     },
     {
       "id": "C-3",
-      "claim": "claimant/amount/counterparty never public",
-      "evidence": "docs/PRIVACY_BOUNDARY.md table + no identity in registry events"
+      "status": "proven",
+      "scope": "source and recorded receipts",
+      "claim": "Registry events expose a slot and opaque commitment, not a named claimant, raw financing amount, or counterparty field.",
+      "evidence": "RightsRegistry event definitions and the recorded RightClaimed receipts. This is not a claim of transaction-level wallet unlinkability; see C-5.",
+      "regenerate": "node --experimental-strip-types scripts/verify-mainnet.ts --all"
     },
     {
       "id": "C-4",
-      "claim": "settlement consumes the right, once",
-      "evidence": "replayed_settlement_reverts + mainnet settleAndRepay tx 0x31e7689cb1e267d80909157c094796c864ba6b606a036f07695414ca5292d85 (verify-mainnet.ts)"
+      "status": "proven",
+      "scope": "tests and mainnet",
+      "claim": "The recorded adapter position is cleared and the registry right is consumed in one settle_and_repay transaction.",
+      "evidence": "replayed_settlement_reverts plus the mainnet settle receipt, which contains Repaid and RightConsumed for the same slot. This does not prove an economic repayment or token transfer.",
+      "regenerate": "node --experimental-strip-types scripts/verify-mainnet.ts --all"
     },
     {
       "id": "C-5",
-      "claim": "claiming wallet unlinked from the right",
-      "evidence": "direct_registry_call_reverts + anonymizer route in TX3"
+      "status": "proven",
+      "scope": "source and recorded receipts; privacy boundary is deliberately narrow",
+      "claim": "The registry caller is the configured anonymizer, while a bundled public pool deposit can still link its depositing wallet to the same transaction's slot.",
+      "evidence": "Recorded receipts contain STRK20 Deposit, ExternalContractInvoked(anonymizer), and the Sole transition atomically. The registry never receives the wallet as msg.sender; the transaction receipt can still correlate it.",
+      "regenerate": "node --experimental-strip-types scripts/verify-mainnet.ts --all"
     },
     {
       "id": "C-6",
-      "claim": "the money market executes only when Sole authorizes; never on a duplicate or after consumption",
-      "evidence": "tests/adversarial/test_venue_gating.cairo (all cases) + mainnet finance tx 0x62c80fd0e2d782b827e33c1128088c72ba1bdc13eff99b461287bc84e108202 (executes when authorized, verify-mainnet.ts); the duplicate/post-consumption rejection cases are proven in tests only - a live duplicate-claim attempt timed out at the wallet without a conclusive on-chain result"
+      "status": "proven",
+      "scope": "source and mainnet affirmative case; no asset-transfer claim",
+      "claim": "FallbackMarket records one opaque position only for an ACTIVE right and later clears that record.",
+      "evidence": "test_venue_gating.cairo plus mainnet Financed and Repaid events. The deployed fallback adapter does not transfer assets, issue credit, or call an external market.",
+      "regenerate": "node --experimental-strip-types scripts/verify-mainnet.ts --all"
     },
     {
       "id": "C-7",
-      "claim": "a consumed right is refused at a DIFFERENT venue too; single-use is global to the right, not local to one settlement",
-      "evidence": "tests/adversarial: second_venue_refuses_a_consumed_right. The live demo reads venue 2's registry() wiring and the shared CONSUMED state without submitting an intentionally reverting sponsored transaction."
+      "status": "pending",
+      "scope": "tests only; deployed second-adapter independence is not verified",
+      "claim": "A distinct shared-registry venue rejects a consumed right with AUTH_RIGHT_NOT_ACTIVE.",
+      "evidence": "tests/adversarial: second_venue_refuses_a_consumed_right. The deployed second adapter does not currently report a distinct venue address, so this is not presented as a live cross-venue proof.",
+      "regenerate": "cd contracts && snforge test"
     },
     {
       "id": "C-8",
-      "claim": "an execution auth is bound to the real on-chain claim commitment, not a caller-supplied value - a tampered or guessed nonce is refused",
-      "evidence": "tests/adversarial/test_venue_gating.cairo: venue_rejects_a_tampered_nonce"
+      "status": "proven",
+      "scope": "tests",
+      "claim": "An adapter recomputes ExecAuth from the active slot and commitment rather than trusting a caller-supplied nonce.",
+      "evidence": "tests/adversarial/test_venue_gating.cairo: venue_rejects_a_tampered_nonce.",
+      "regenerate": "cd contracts && snforge test"
     },
     {
       "id": "C-9",
-      "claim": "a right can be financed at most once while ACTIVE, tracked per right rather than per auth nonce",
-      "evidence": "tests/adversarial/test_venue_gating.cairo: venue_refuses_to_finance_the_same_active_right_twice"
+      "status": "proven",
+      "scope": "tests",
+      "claim": "The adapter rejects a second position-recording action for the same ACTIVE right.",
+      "evidence": "tests/adversarial/test_venue_gating.cairo: venue_refuses_to_finance_the_same_active_right_twice.",
+      "regenerate": "cd contracts && snforge test"
     }
   ],
   "transactions": [
     {
+      "hash": "0x7797bdeed0c7a852f0ed025e3f3dafa2fd77417b00937081b443eb00b9ad7b7",
+      "kind": "register",
+      "block_number": 14362577,
+      "expected_event": "RightRegistered",
+      "actual_fee_fri": "0xd2fe4200a6ee50",
+      "pool_deposit_fri": null,
+      "pool_fee_withdrawal_fri": null,
+      "privacy_exposure": "Direct registration: no STRK20 pool event in this receipt.",
+      "note": "SUCCEEDED direct registration through the deployed anonymizer; this is a network transaction, not a private pool action."
+    },
+    {
       "hash": "0x3029e23d3eaa0ee82a18b81b828ff49188cb1d8495529248b26e658e53714e0",
       "kind": "claim",
-      "note": "Reconciled live against the registry/anonymizer contracts via direct RPC (not just the app log): SUCCEEDED, emits RightClaimed from the real registry, routes through the real anonymizer."
+      "block_number": 14433303,
+      "expected_event": "RightClaimed",
+      "actual_fee_fri": "0x217d190fff54b340",
+      "pool_deposit_fri": "0xa688906bd8b00000",
+      "pool_fee_withdrawal_fri": "0x53444835ec580000",
+      "privacy_exposure": "Public 12 STRK pool Deposit, pool invoke, and RightClaimed share this receipt; the depositor can be correlated with the slot.",
+      "note": "SUCCEEDED claim through the pool and configured anonymizer."
     },
     {
       "hash": "0x1d17afaa5c31d35a4465796f9e88248e8b440d5121972b88a601b2ec1abe8c3",
       "kind": "claim",
-      "note": "Same reconciliation as above. registry.state_of() for this slot_key reads Active live on-chain."
+      "block_number": 14434308,
+      "expected_event": "RightClaimed",
+      "actual_fee_fri": "0x213ad23eeacbba40",
+      "pool_deposit_fri": "0xa688906bd8b00000",
+      "pool_fee_withdrawal_fri": "0x53444835ec580000",
+      "privacy_exposure": "Public 12 STRK pool Deposit, pool invoke, and RightClaimed share this receipt; the depositor can be correlated with the slot.",
+      "note": "SUCCEEDED claim through the pool and configured anonymizer."
     },
     {
       "hash": "0x1990b99a16dc10c8427f8be3942f9568946867d8d24b37e5109e0ad2e19128",
       "kind": "claim",
-      "note": "Same reconciliation as above."
+      "block_number": 14430741,
+      "expected_event": "RightClaimed",
+      "actual_fee_fri": "0x22592610bfcd5b50",
+      "pool_deposit_fri": "0xa688906bd8b00000",
+      "pool_fee_withdrawal_fri": "0x53444835ec580000",
+      "privacy_exposure": "Public 12 STRK pool Deposit, pool invoke, and RightClaimed share this receipt; the depositor can be correlated with the slot.",
+      "note": "SUCCEEDED claim through the pool and configured anonymizer."
     },
     {
       "hash": "0x1b015f46fc8bccd11ea303e15c6bd5bb9543f3a0fc44c3e7496678c5136aa4b",
       "kind": "claim",
-      "note": "From a second, independent, previously-unused account - rules out anything account-specific about the claim path."
+      "block_number": 14445357,
+      "expected_event": "RightClaimed",
+      "actual_fee_fri": "0x2276429f5bc80e80",
+      "pool_deposit_fri": "0xa688906bd8b00000",
+      "pool_fee_withdrawal_fri": "0x53444835ec580000",
+      "privacy_exposure": "Public 12 STRK pool Deposit, pool invoke, and RightClaimed share this receipt; the depositor can be correlated with the slot.",
+      "note": "SUCCEEDED claim through the pool and configured anonymizer."
     },
     {
       "hash": "0x62c80fd0e2d782b827e33c1128088c72ba1bdc13eff99b461287bc84e108202",
-      "kind": "finance",
-      "note": "Reconciled directly against the deployed ExecutionAdapter: SUCCEEDED, routes through the real ClaimAnonymizer, adapter emits Financed for the claimed slot_key. finance() never touches RightsRegistry directly (state_of() is a view call), so this is verified via the adapter's own event, not a registry event."
+      "kind": "record-position",
+      "block_number": 14479009,
+      "expected_event": "Financed",
+      "actual_fee_fri": "0x234e0811c9e376f0",
+      "pool_deposit_fri": "0xa688906bd8b00000",
+      "pool_fee_withdrawal_fri": "0x53444835ec580000",
+      "privacy_exposure": "Public 12 STRK pool Deposit, pool invoke, and Financed share this receipt; the depositor can be correlated with the slot.",
+      "note": "SUCCEEDED FallbackMarket position record for an ACTIVE right; no token transfer or external-market call is evidenced."
     },
     {
       "hash": "0x31e7689cb1e267d80909157c094796c864ba6b606a036f07695414ca5292d85",
-      "kind": "settle",
-      "note": "Reconciled directly against the registry and the adapter: SUCCEEDED, registry emits RightConsumed for the slot_key, adapter emits Repaid in the same atomic transaction, routes through the real ClaimAnonymizer."
+      "kind": "clear-position-and-consume",
+      "block_number": 14479078,
+      "expected_event": "RightConsumed + Repaid",
+      "actual_fee_fri": "0x250ec0debe0ad8c0",
+      "pool_deposit_fri": "0xa688906bd8b00000",
+      "pool_fee_withdrawal_fri": "0x53444835ec580000",
+      "privacy_exposure": "Public 12 STRK pool Deposit, pool invoke, Repaid, and RightConsumed share this receipt; the depositor can be correlated with the slot.",
+      "note": "SUCCEEDED atomic position clear and registry consumption; no economic repayment or token transfer is evidenced."
     }
   ]
 }
