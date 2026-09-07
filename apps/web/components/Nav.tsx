@@ -8,6 +8,7 @@ const links = [
   { href: "/app", label: "Demo" },
   { href: "/verify", label: "Verify" },
   { href: "/protocol", label: "Protocol" },
+  { href: "/docs", label: "Docs" },
 ];
 
 export function Nav() {
