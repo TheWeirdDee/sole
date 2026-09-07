@@ -352,7 +352,7 @@ Bank A -> shielded funding -> anonymizer -> claim() -> `}
           </motion.div>
 
           <p style={{ fontSize: 18, color: "#413a2b", maxWidth: 740, margin: "24px auto 0", textAlign: "center", lineHeight: 1.6 }}>
-            The venue is downstream of Sole: it can only execute a right Sole has activated, and it refuses a spent one — at this market or a different one entirely.
+            The venue is downstream of Sole: it can only execute a right Sole has activated, and it refuses a spent one — at this market or a different one entirely. What makes that enforceable is a fourth value, <span className="mono">ExecAuth</span> — minted only for an ACTIVE right, bound to its exact on-chain commitment, and single-use per right. A venue re-derives it itself; it never trusts one supplied by the caller.
           </p>
 
           <div style={{ display: "flex", justifyContent: "center", marginTop: 28 }}>
@@ -444,6 +444,17 @@ Bank A -> shielded funding -> anonymizer -> claim() -> `}
 
           <p style={{ fontSize: 13.5, color: "var(--faded)", marginTop: 16, textAlign: "center" }}>
             *Anyone holding the canonical id can read a right&apos;s state. Sole hides the economic relationship behind that state, not the fact that a known right is active.
+          </p>
+          <p style={{ fontSize: 13.5, color: "var(--faded)", marginTop: 6, textAlign: "center" }}>
+            This table is a summary. The complete privacy boundary — including what it does not claim and where it
+            reduces privacy anyway — lives in one place:{" "}
+            <a
+              href="https://github.com/TheWeirdDee/sole/blob/main/docs/PRIVACY_BOUNDARY.md"
+              target="_blank" rel="noopener noreferrer" style={{ color: "var(--claret)" }}
+            >
+              docs/PRIVACY_BOUNDARY.md
+            </a>
+            . Every other page restates it; that document decides.
           </p>
         </div>
       </motion.section>
