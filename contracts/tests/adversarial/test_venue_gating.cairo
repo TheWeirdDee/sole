@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Sole - venue gating tests
-// Proves the causal claim: the money market executes ONLY when Sole says the
-// right is ACTIVE, AND only with an auth nonce that genuinely matches the
-// on-chain claim commitment for that slot - not merely any unused felt.
+// Sole - shared-registry adapter gating tests
+// Proves a source-level gate: this fallback adapter records a position ONLY
+// when Sole says the right is ACTIVE, and only with an auth nonce that matches
+// the on-chain claim commitment for that slot - not merely any unused felt.
 //
-//   A claims -> ACTIVE -> finance() succeeds -> settle repays + consumes
-//   B claims same right -> REVERT at Sole -> B never obtains ACTIVE -> finance() reverts
+//   A claims -> ACTIVE -> finance() records position -> settle() clears position
+//   B's unclaimed path -> finance() reverts
 //   after CONSUMED -> finance() reverts
-//   a tampered nonce, or financing the same ACTIVE right twice -> both refused
+//   a tampered nonce, or recording the same ACTIVE right twice -> both refused
+//
+// This harness deploys two fallback-adapter instances against one registry. It
+// is not evidence that a deployed second adapter is an independently configured
+// venue, nor that finance()/settle() transfer value or repay a loan.
 
 use snforge_std::{declare, ContractClassTrait, DeclareResultTrait, start_cheat_caller_address,
     stop_cheat_caller_address};
@@ -55,11 +59,11 @@ fn venue_executes_only_when_authorized() {
     reg.claim(SLOT, COMMIT_A);            // A -> ACTIVE
     stop_cheat_caller_address(reg.contract_address);
 
-    // financing runs against the venue, gated by Sole's ACTIVE state
+    // The fallback adapter records a position, gated by Sole's ACTIVE state.
     start_cheat_caller_address(mkt.contract_address, ANON());
     let auth = real_auth(SLOT, COMMIT_A);
     let pos = mkt.finance(auth, AMT);
-    assert(pos == AMT, 'financed against venue');
+    assert(pos == AMT, 'position recorded');
     stop_cheat_caller_address(mkt.contract_address);
 }
 
@@ -76,7 +80,8 @@ fn venue_never_executes_without_active_right() {
     // slot; any nonce - even the one that would be correct once claimed -
     // fails the ACTIVE check first.
     let auth = real_auth(SLOT, 0);
-    mkt.finance(auth, AMT);              // no ACTIVE right -> venue refuses
+    // (shared-registry adapter, non-ACTIVE) --finance--> REVERT AUTH_RIGHT_NOT_ACTIVE
+    mkt.finance(auth, AMT);
 }
 
 #[test]
@@ -85,7 +90,7 @@ fn venue_rejects_a_tampered_nonce() {
     // The vulnerability this closes: auth.nonce must be independently
     // recomputed from the registry's own commitment, never trusted from
     // calldata. An attacker who guesses (or is handed) an ACTIVE slot_key
-    // cannot finance it with a made-up nonce.
+    // cannot record a position with a made-up nonce.
     let (reg, mkt) = deploy();
     start_cheat_caller_address(reg.contract_address, ANON());
     reg.register_right(SLOT);
@@ -101,8 +106,8 @@ fn venue_rejects_a_tampered_nonce() {
 #[should_panic(expected: 'RIGHT_ALREADY_FINANCED')]
 fn venue_refuses_to_finance_the_same_active_right_twice() {
     // The other half of the same vulnerability: even with the correct,
-    // properly-derived auth, a right can be financed at most once while
-    // ACTIVE. Financing is tracked per slot_key, not per nonce.
+    // properly-derived auth, a position can be recorded at most once while
+    // ACTIVE. The fallback position is tracked per slot_key, not per nonce.
     let (reg, mkt) = deploy();
     start_cheat_caller_address(reg.contract_address, ANON());
     reg.register_right(SLOT);
@@ -127,7 +132,7 @@ fn venue_refuses_after_consumption() {
     start_cheat_caller_address(mkt.contract_address, ANON());
     let auth = real_auth(SLOT, COMMIT_A);
     mkt.finance(auth, AMT);
-    mkt.settle(auth);                    // repay + release
+    mkt.settle(auth);                    // clear fallback position
     stop_cheat_caller_address(mkt.contract_address);
 
     start_cheat_caller_address(reg.contract_address, ANON());
@@ -135,14 +140,15 @@ fn venue_refuses_after_consumption() {
     stop_cheat_caller_address(reg.contract_address);
 
     start_cheat_caller_address(mkt.contract_address, ANON());
-    mkt.finance(auth, AMT);             // consumed right -> venue refuses
+    // (shared-registry adapter, non-ACTIVE) --finance--> REVERT AUTH_RIGHT_NOT_ACTIVE
+    mkt.finance(auth, AMT);
 }
 
-// Cross-venue single-use: a right consumed once cannot be financed again at a
-// DIFFERENT venue. Two independent adapters, same registry. Neither the second
-// venue nor its future lender learns who financed first - they learn only that
-// the right is spent. This is the guarantee a per-settlement rollback cannot
-// give: consumption is global to the right, not local to one market.
+// Shared-registry adapter test: a consumed right cannot have a fallback
+// position recorded by another adapter instance in this harness. This is the
+// source/test form of the generic gate below, not a deployed independent-venue
+// assertion or a wallet-privacy assertion.
+// (shared-registry adapter, non-ACTIVE) --finance--> REVERT AUTH_RIGHT_NOT_ACTIVE
 #[test]
 #[should_panic(expected: 'AUTH_RIGHT_NOT_ACTIVE')]
 fn second_venue_refuses_a_consumed_right() {
@@ -154,7 +160,7 @@ fn second_venue_refuses_a_consumed_right() {
     stop_cheat_caller_address(reg.contract_address);
     let mkt_c = declare("FallbackMarket").unwrap().contract_class();
     let (mkt1_addr, _) = mkt_c.deploy(@array![reg_addr.into(), ANON().into()]).unwrap();
-    let (mkt2_addr, _) = mkt_c.deploy(@array![reg_addr.into(), ANON().into()]).unwrap(); // second venue
+    let (mkt2_addr, _) = mkt_c.deploy(@array![reg_addr.into(), ANON().into()]).unwrap(); // second test adapter
     let mkt1 = IExecutionAdapterDispatcher { contract_address: mkt1_addr };
     let mkt2 = IExecutionAdapterDispatcher { contract_address: mkt2_addr };
 
@@ -165,7 +171,7 @@ fn second_venue_refuses_a_consumed_right() {
 
     let auth = real_auth(SLOT, COMMIT_A);
     start_cheat_caller_address(mkt1.contract_address, ANON());
-    mkt1.finance(auth, AMT);          // financed at venue 1
+    mkt1.finance(auth, AMT);          // fallback position recorded on adapter 1
     mkt1.settle(auth);
     stop_cheat_caller_address(mkt1.contract_address);
 
@@ -173,7 +179,7 @@ fn second_venue_refuses_a_consumed_right() {
     reg.settle(SLOT, NULL_A);         // right CONSUMED, globally
     stop_cheat_caller_address(reg.contract_address);
 
-    // A different venue, a different lender, later. The right is spent.
+    // A distinct adapter instance in the test harness sees a consumed right.
     start_cheat_caller_address(mkt2.contract_address, ANON());
-    mkt2.finance(auth, AMT);          // venue 2 refuses -> AUTH_RIGHT_NOT_ACTIVE
+    mkt2.finance(auth, AMT);          // reverts -> AUTH_RIGHT_NOT_ACTIVE
 }
