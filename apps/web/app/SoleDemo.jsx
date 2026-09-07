@@ -85,7 +85,21 @@ export default function SoleDemo() {
     try { return await work(); } finally { actionLock.current = false; }
   };
 
-  const cur = !s.connected ? 0 : s.consumed ? 6 : s.rejected ? 4 : s.state === "ACTIVE" ? (s.financed ? 3 : 2) : s.state === "UNCLAIMED" ? 1 : 2;
+  const cur = !s.connected
+    ? 0
+    : !s.registered
+    ? 1
+    : s.state === "UNCLAIMED"
+    ? 2
+    : s.state === "ACTIVE" && !s.financed
+    ? 3
+    : s.state === "ACTIVE" && s.financed && !s.rejected
+    ? 3
+    : s.rejected && !s.consumed
+    ? 4
+    : s.consumed && !s.venue2
+    ? 5
+    : 6;
   const live = s.mode === "live";
 
   // Keep the selected reference and its public registration evidence for this
@@ -403,7 +417,17 @@ export default function SoleDemo() {
 
   const connect = () => runExclusive(async () => {
     if (!live) {
-      set({ connected: true, registered: true, proofStateReady: true });
+      set({
+        connected: true,
+        state: "UNCLAIMED",
+        consumed: false,
+        rejected: false,
+        financed: false,
+        venue2: false,
+        registered: false,
+        registrationTxHash: null,
+        proofStateReady: true,
+      });
       push("Illustrative offline setup -> UNCLAIMED. No wallet request, hash, or chain action.");
       return;
     }
@@ -483,6 +507,7 @@ export default function SoleDemo() {
     return runExclusive(async () => {
       if (!live) {
         set({ registered: true, proofStateReady: true });
+        push("Illustrative offline registration -> UNCLAIMED. No wallet request, hash, or chain action.");
         return;
       }
       set({ busy: "register", error: null });
@@ -542,8 +567,8 @@ export default function SoleDemo() {
 
   const claimA = () => runExclusive(async () => {
     if (!live) {
-      set({ state: "ACTIVE", holder: "A", rejected: false });
-      push("Illustrative offline claim -> ACTIVE. No wallet request, hash, or chain action.");
+      set({ state: "ACTIVE", holder: "A", rejected: false, proofStateReady: true });
+      push("Illustrative offline claim -> ACTIVE. No wallet request, hash, asset transfer, or chain action.");
       return;
     }
     set({ busy: "claimA", error: null });
@@ -619,7 +644,7 @@ export default function SoleDemo() {
   // claim has both confirmed and matured in the proof base.
   const financeA = () => runExclusive(async () => {
     if (!live) {
-      set({ financed: true });
+      set({ financed: true, proofStateReady: true });
       push("Illustrative offline adapter position record. No wallet request, hash, asset transfer, or chain action.");
       return;
     }
@@ -911,7 +936,7 @@ export default function SoleDemo() {
 
   const settle = () => runExclusive(async () => {
     if (!live) {
-      set({ state: "CONSUMED", consumed: true, rejected: false });
+      set({ state: "CONSUMED", consumed: true, rejected: false, proofStateReady: true });
       push("Illustrative offline position clear + consume -> CONSUMED. No wallet request, hash, asset transfer, or chain action.");
       return;
     }
@@ -1071,7 +1096,7 @@ export default function SoleDemo() {
         <p style={{ fontSize: 13, color: faded, margin: "0 0 16px" }}>
           {live
             ? "A Ready wallet on Starknet mainnet, with STRK for fees. Private-action fees are read live from STRK20; Sole does not automatically shield public STRK."
-            : "Demo mode: no wallet needed, nothing touches mainnet."}
+            : "Illustrative offline mode: no wallet is needed and nothing touches mainnet."}
         </p>
         {live && (
           <p style={{ fontSize: 12.5, color: faded, margin: "-7px 0 16px", lineHeight: 1.5 }}>
@@ -1119,8 +1144,8 @@ export default function SoleDemo() {
         )}
         <Btn onClick={connect} disabled={s.connected || s.busy === "connect"} icon={s.busy === "connect" ? <Loader2 size={16} className="spin" /> : <Wallet size={16} />} primary>
           {s.connected
-            ? (live && s.account ? `Connected · ${s.account.address.slice(0, 6)}…${s.account.address.slice(-4)}` : "Connected (demo)")
-            : (s.busy === "connect" ? "Connecting…" : live ? "Connect Ready wallet" : "Connect (demo)")}
+            ? (live && s.account ? `Connected · ${s.account.address.slice(0, 6)}…${s.account.address.slice(-4)}` : "Connected (illustrative)")
+            : (s.busy === "connect" ? "Connecting…" : live ? "Connect Ready wallet" : "Connect (illustrative)")}
         </Btn>
       </Panel>
 
@@ -1188,12 +1213,14 @@ export default function SoleDemo() {
       )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <Actor who="Bank A" role="claims and records one adapter position">
-          {live && s.connected && !s.registered && (
+          {s.connected && !s.registered && (
             <>
-              <p style={{ fontSize: 12.5, color: claret, margin: "0 0 2px", lineHeight: 1.45 }}>
-                Connect is free. Sole never registers a right automatically. Registration is one network transaction
-                for this specific receivable, not Ready's one-time wallet setup.
-              </p>
+              {live && (
+                <p style={{ fontSize: 12.5, color: claret, margin: "0 0 2px", lineHeight: 1.45 }}>
+                  Connect is free. Sole never registers a right automatically. Registration is one network transaction
+                  for this specific receivable, not Ready's one-time wallet setup.
+                </p>
+              )}
               {s.registrationTxHash || s.registrationOutcomeUnknown ? (
                 <p style={{ fontSize: 12.5, color: faded, margin: "0 0 2px", lineHeight: 1.45 }}>
                   {s.registrationTxHash
@@ -1205,29 +1232,31 @@ export default function SoleDemo() {
                   {s.busy === "register" ? "Registering right…" : "Register this right once (network fee)"}
                 </Btn>
               )}
-              <div style={{ borderTop: `1px solid ${rule}`, paddingTop: 10, marginTop: 2 }}>
-                <label style={{ display: "block", fontSize: 12, color: faded, marginBottom: 5 }}>
-                  Recover an earlier registration without gas. If this tab has a different reference, paste the original
-                  reference from its log as well; otherwise leave it blank.
-                </label>
-                <input
-                  value={registrationReferenceInput}
-                  onChange={(event) => setRegistrationReferenceInput(event.target.value)}
-                  placeholder={`Original reference (current: ${s.reference})`}
-                  spellCheck={false}
-                  style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${rule}`, background: "#f7f1e3", color: ink, padding: "8px 9px", fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, marginBottom: 6 }}
-                />
-                <input
-                  value={registrationHashInput}
-                  onChange={(event) => setRegistrationHashInput(event.target.value)}
-                  placeholder={s.registrationTxHash || "0x…"}
-                  spellCheck={false}
-                  style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${rule}`, background: "#f7f1e3", color: ink, padding: "8px 9px", fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12 }}
-                />
-                <Btn onClick={verifyEarlierRegistration} disabled={!!s.busy} icon={s.busy === "verifyRegistration" ? <Loader2 size={16} className="spin" /> : <Eye size={16} />}>
-                  {s.busy === "verifyRegistration" ? "Verifying…" : "Recover & verify registration (no gas)"}
-                </Btn>
-              </div>
+              {live && (
+                <div style={{ borderTop: `1px solid ${rule}`, paddingTop: 10, marginTop: 2 }}>
+                  <label style={{ display: "block", fontSize: 12, color: faded, marginBottom: 5 }}>
+                    Recover an earlier registration without gas. If this tab has a different reference, paste the original
+                    reference from its log as well; otherwise leave it blank.
+                  </label>
+                  <input
+                    value={registrationReferenceInput}
+                    onChange={(event) => setRegistrationReferenceInput(event.target.value)}
+                    placeholder={`Original reference (current: ${s.reference})`}
+                    spellCheck={false}
+                    style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${rule}`, background: "#f7f1e3", color: ink, padding: "8px 9px", fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, marginBottom: 6 }}
+                  />
+                  <input
+                    value={registrationHashInput}
+                    onChange={(event) => setRegistrationHashInput(event.target.value)}
+                    placeholder={s.registrationTxHash || "0x…"}
+                    spellCheck={false}
+                    style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${rule}`, background: "#f7f1e3", color: ink, padding: "8px 9px", fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12 }}
+                  />
+                  <Btn onClick={verifyEarlierRegistration} disabled={!!s.busy} icon={s.busy === "verifyRegistration" ? <Loader2 size={16} className="spin" /> : <Eye size={16} />}>
+                    {s.busy === "verifyRegistration" ? "Verifying…" : "Recover & verify registration (no gas)"}
+                  </Btn>
+                </div>
+              )}
             </>
           )}
           <Btn onClick={claimA} disabled={s.state !== "UNCLAIMED" || !s.connected || !s.registered || !s.proofStateReady || !!s.busy || s.claimOutcomeUnknown} icon={s.busy === "claimA" ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />} primary>
@@ -1308,7 +1337,26 @@ export default function SoleDemo() {
           <button onClick={startDifferentRight} disabled={!!s.busy || s.claimOutcomeUnknown || holdsLocalClaim} style={{ border: "none", background: "none", color: claret, cursor: s.busy || s.claimOutcomeUnknown || holdsLocalClaim ? "not-allowed" : "pointer", fontFamily: "inherit", fontSize: 14 }}>Start a different right (no transaction)</button>
         </div>
         <div style={{ background: "#e2d9c2", border: `1px solid ${rule}`, padding: 14, minHeight: 64, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, color: "#4a4436", lineHeight: 1.7, wordBreak: "break-all" }}>
-          {s.log.length === 0 ? <span style={{ color: faded }}>No transitions yet. Connect, then let Bank A claim.</span> : s.log.map((l, i) => <div key={i}>{"› "}{l}</div>)}
+          {s.log.length === 0 ? (
+            <span style={{ color: faded }}>No transitions yet. Connect, then let Bank A claim.</span>
+          ) : (
+            s.log.map((l, i) => {
+              if (typeof l !== "string") return <div key={i}>{"› "}{l}</div>;
+              const urlMatch = l.match(/(https:\/\/[^\s]+)/);
+              if (!urlMatch) return <div key={i}>{"› "}{l}</div>;
+              const url = urlMatch[1];
+              const parts = l.split(url);
+              return (
+                <div key={i}>
+                  {"› "}{parts[0]}
+                  <a href={url} target="_blank" rel="noreferrer" style={{ color: claret, textDecoration: "underline" }}>
+                    {url}
+                  </a>
+                  {parts[1]}
+                </div>
+              );
+            })
+          )}
         </div>
       </section>
     </main>
