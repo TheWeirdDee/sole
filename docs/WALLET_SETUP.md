@@ -7,6 +7,13 @@ Wallet API / STRK20 requirement, not something Sole's code can do on the
 account's behalf - skip it and every private action reverts with
 `NOT_REGISTERED`, which looks like a dapp bug but isn't one.
 
+The deployed fallback adapter's `finance` and `settleAndRepay` method names do
+not mean that a loan or repayment occurs: it records and clears an opaque
+position only. The public receipt boundary is also narrow: a bundled public
+deposit can correlate its wallet with the Sole slot. See
+[`NON_CLAIMS.md`](./NON_CLAIMS.md) and
+[`PRIVACY_BOUNDARY.md`](./PRIVACY_BOUNDARY.md).
+
 ## 1. Install Ready and fund it
 
 Install the [Ready](https://ready.co) browser extension and fund the account
@@ -41,9 +48,6 @@ different, unrelated** screens that both sound like they might be it:
   tokens."** Tapping it opens a short explainer ("Register this account to
   receive private tokens and shield your balance... Shield to send
   privately... Unshield anytime") followed by a **Shield** screen.
-
-*(A screenshot of this exact card, taken from a real Ready session, belongs
-here - add one from `docs/screenshots/` if you have it on hand.)*
 
 ## 3. On the Shield screen: enter a small amount, not 100%
 
