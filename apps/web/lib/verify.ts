@@ -5,13 +5,19 @@
 // from the live provider/addresses instead of local evidence files.
 
 import { hash } from "starknet";
-import { provider, ADDRS } from "./sole";
+import { provider, ADDRS, ADAPTER_VENUE_2 } from "./sole";
 
 const SEL = {
   RightRegistered: hash.getSelectorFromName("RightRegistered"),
   RightClaimed: hash.getSelectorFromName("RightClaimed"),
   RightConsumed: hash.getSelectorFromName("RightConsumed"),
+  Financed: hash.getSelectorFromName("Financed"),
+  Repaid: hash.getSelectorFromName("Repaid"),
 };
+
+const adapterAddrs = [ADDRS.adapter, ADAPTER_VENUE_2]
+  .filter((a): a is string => Boolean(a))
+  .map((a) => BigInt(a));
 
 export interface CheckLine { ok: boolean; label: string }
 export interface VerifyResult { txHash: string; kind: string; lines: CheckLine[] }
@@ -33,6 +39,9 @@ export async function verifyTx(txHash: string): Promise<VerifyResult> {
   const soleEvents = (receipt.events ?? []).filter(
     (e: any) => e.from_address != null && BigInt(e.from_address) === registryAddr,
   );
+  const adapterEvents = (receipt.events ?? []).filter(
+    (e: any) => e.from_address != null && adapterAddrs.some((a) => BigInt(e.from_address) === a),
+  );
 
   if (reverted) {
     const reason = receipt.revert_reason ?? "";
@@ -52,11 +61,12 @@ export async function verifyTx(txHash: string): Promise<VerifyResult> {
     return { txHash, kind: "unexpected-revert", lines };
   }
 
-  if (soleEvents.length === 0) {
-    push(false, "no Sole RightsRegistry event in this transaction");
+  if (soleEvents.length === 0 && adapterEvents.length === 0) {
+    push(false, "no Sole RightsRegistry or ExecutionAdapter event in this transaction");
     return { txHash, kind: "no-event", lines };
   }
-  push(true, "emitted by the Sole RightsRegistry");
+  if (soleEvents.length > 0) push(true, "emitted by the Sole RightsRegistry");
+  else push(true, "emitted by a known Sole ExecutionAdapter (finance() reads state_of() as a view call, no registry event)");
 
   let tx: any;
   try {
@@ -72,11 +82,18 @@ export async function verifyTx(txHash: string): Promise<VerifyResult> {
     : "transaction did not route through the ClaimAnonymizer");
 
   const kinds = soleEvents.map((e: any) => e.keys?.[0]);
+  const adapterKinds = adapterEvents.map((e: any) => e.keys?.[0]);
   let kind = "unknown";
   if (kinds.includes(SEL.RightClaimed)) { push(true, "decodes to claim -> ACTIVE"); kind = "claim"; }
-  else if (kinds.includes(SEL.RightConsumed)) { push(true, "decodes to settle -> CONSUMED"); kind = "settle"; }
-  else if (kinds.includes(SEL.RightRegistered)) { push(true, "decodes to register -> UNCLAIMED"); kind = "register"; }
-  else push(false, "no recognized Sole transition in the emitted events");
+  else if (kinds.includes(SEL.RightConsumed)) {
+    push(true, "decodes to settle -> CONSUMED");
+    if (adapterKinds.includes(SEL.Repaid)) push(true, "adapter also emitted Repaid (settle_and_repay: venue repaid atomically)");
+    kind = "settle";
+  } else if (kinds.includes(SEL.RightRegistered)) { push(true, "decodes to register -> UNCLAIMED"); kind = "register"; }
+  else if (adapterKinds.includes(SEL.Financed)) {
+    push(true, "adapter emitted Financed -> financing executed against an ACTIVE right");
+    kind = "finance";
+  } else push(false, "no recognized Sole transition in the emitted events");
 
   return { txHash, kind, lines };
 }
