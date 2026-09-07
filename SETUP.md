@@ -5,9 +5,9 @@
 - Node 20+ for the SDK, scripts, and web app
 - A Starknet mainnet account with STRK for fees. Each STRK20 privacy action
   (claim/finance/settle) pays the pool's flat per-action fee - read live from
-  `get_fee_amount()` in the SDK, never hardcoded, since it's admin-settable
-  and has already changed once (4 STRK when the STRK20 docs were first
-  written, 6 STRK as verified live on mainnet in this repo).
+  `get_fee_amount()` in the SDK, never hardcoded. Receipt L2 fees, optional
+  public deposits, and pool withdrawals are separate values; inspect the
+  current wallet quote and [`docs/EVIDENCE_LEDGER.md`](docs/EVIDENCE_LEDGER.md).
 - A privacy-enabled wallet (Ready extension) + starknet.js v10.4.0
 - **The connected account must register with the STRK20 pool first, once.**
   Full walkthrough, with exactly which screen to use and which one to avoid:
