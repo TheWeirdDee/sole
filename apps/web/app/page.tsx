@@ -1,13 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Lock, Eye, EyeOff, ShieldCheck, Ban, CheckCircle2, ChevronRight, Layers, Sparkles } from "lucide-react";
+import { ArrowRight, Lock, ChevronRight } from "lucide-react";
 import { motion, Variants } from "framer-motion";
 import { GrainOverlay } from "../components/GrainOverlay";
 
 const wrap: React.CSSProperties = { maxWidth: 1040, margin: "0 auto", padding: "0 26px" };
-const thc: React.CSSProperties = { textAlign: "left", padding: "14px 18px", background: "var(--parch2)", fontWeight: 600, borderBottom: "1px solid var(--paper-line)" };
-const tdc: React.CSSProperties = { textAlign: "left", padding: "14px 18px", borderBottom: "1px solid var(--paper-line)" };
 
 // Animation variants
 const containerVariants: Variants = {
@@ -90,9 +88,9 @@ export default function Home() {
               color: "var(--ink)",
             }}
           >
-            One right. One financing.
+            One right. One gated execution.
             <br />
-            Enforced everywhere, without revealing who.
+            Enforced by a public state machine.
           </motion.h1>
 
           {/* Subtitle */}
@@ -106,10 +104,10 @@ export default function Home() {
               lineHeight: 1.55,
             }}
           >
-            Sole turns a financial right into a single-use execution right: claimed privately, it
-            authorizes one real financing action, then is spent for good. Two lenders can never
-            finance the same right, at any venue. The chain enforces it without learning the holder,
-            the amount, or the relationship.
+            Sole records one active claim for a canonical reference and gates one adapter action while that
+            claim remains ACTIVE. The deployed fallback adapter records and clears an opaque position; it does
+            not transfer assets, issue credit, or call an external market. Read the evidence and limits before
+            treating it as a financing system.
           </motion.p>
 
           {/* Action Buttons */}
@@ -134,7 +132,7 @@ export default function Home() {
                   boxShadow: "0 4px 14px rgba(26,22,15,0.14)",
                 }}
               >
-                See a right get refused <ArrowRight size={17} />
+                Inspect the live demo <ArrowRight size={17} />
               </Link>
             </motion.div>
             <motion.div whileHover={{ scale: 1.03, y: -2 }} whileTap={{ scale: 0.97 }}>
@@ -201,7 +199,7 @@ export default function Home() {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--faded)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--claret)", display: "inline-block" }} />
-                Canonical Asset Right
+                Illustrative fixture — not a live rejected receipt
               </div>
               <div style={{ fontSize: 26, fontWeight: 600, margin: "6px 0 14px", color: "var(--ink)" }}>
                 Receivable RCV-4821
@@ -236,10 +234,10 @@ export default function Home() {
                   boxShadow: "0 2px 8px rgba(124, 29, 42, 0.12)",
                 }}
               >
-                Refused
+                Test-only refusal
               </div>
               <span style={{ fontSize: 11.5, color: "var(--faded)", fontStyle: "italic" }}>
-                Bank B collision on chain
+                Duplicate-claim revert is covered by tests; no mainnet rejection receipt is recorded.
               </span>
             </motion.div>
           </motion.div>
@@ -260,26 +258,31 @@ export default function Home() {
               Architecture
             </div>
             <h2 style={{ fontSize: 34, fontWeight: 600, letterSpacing: "-.015em", margin: 0 }}>
-              Three values. One is shared, two stay private.
+              Four protocol values across registry and adapter layers.
             </h2>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))", border: "1px solid var(--rule)", background: "var(--parch2)" }}>
             {[
               {
-                num: "01 — identity",
+                num: "01 — registry identity",
                 title: "slot_key",
-                desc: "Poseidon(TAG_SLOT, canonical id). Deterministic, so any party derives the same key and collides. This is what makes a second claim fail on-chain.",
+                desc: "Poseidon(TAG_SLOT, canonical id). This deterministic public key addresses the registry slot, so the same reference reaches the same state machine.",
               },
               {
-                num: "02 — ownership",
-                title: "claim_record",
-                desc: "Poseidon over the slot, a claimant secret, and a shielded funding note. Private by default. Only the holder can open it.",
+                num: "02 — active commitment",
+                title: "claim_commitment",
+                desc: "An opaque public commitment over the slot and local preimages. The registry stores the commitment; it cannot recover those preimages from it.",
               },
               {
                 num: "03 — consumption",
                 title: "nullifier",
-                desc: "Burned once at settlement. Producing it needs the claimant secret, so only the holder settles — and never twice, at any venue.",
+                desc: "Derived from a local secret and revealed when the registry consumes the right. The registry burns it to prevent the tested replay path.",
+              },
+              {
+                num: "04 — adapter gate",
+                title: "ExecAuth",
+                desc: "Derived from the active slot and claim commitment. The adapter recomputes it and accepts it only while the registry reports ACTIVE; it is not a fourth registry record.",
               },
             ].map((card, i) => (
               <motion.div
@@ -288,7 +291,7 @@ export default function Home() {
                 whileHover="hover"
                 style={{
                   padding: "32px 28px",
-                  borderRight: i < 2 ? "1px solid var(--rule)" : "none",
+                  borderRight: i % 2 === 0 ? "1px solid var(--rule)" : "none",
                   borderBottom: "1px solid var(--rule)",
                   cursor: "default",
                 }}
@@ -301,7 +304,7 @@ export default function Home() {
           </div>
 
           <p style={{ fontSize: 13.5, color: "var(--faded)", marginTop: 18, textAlign: "center" }}>
-            The public chain holds only <span className="mono">slot_key -&gt; state -&gt; commitment</span>. Never an identity, an amount, or a counterparty. Once consumed, the right is spent for every venue.
+            Registry storage maps <span className="mono">slot_key -&gt; state -&gt; active commitment</span>. That is not the whole public transaction footprint: the canonical privacy boundary documents the recorded pool deposits and correlation risk.
           </p>
         </div>
       </motion.section>
@@ -339,20 +342,22 @@ export default function Home() {
               boxShadow: "0 6px 24px rgba(26,22,15,0.18)",
             }}
           >
-            {`STRK20        provides private money    -> shielded notes, private transfer
-the market    provides liquidity        -> lending, repayment
+            {`STRK20 pool    provides the invocation route and fee handling
+FallbackMarket records / clears an opaque adapter position (no asset transfer)
 `}
             <span style={{ color: "var(--gilt)", fontWeight: "bold" }}>Sole</span>
-            {`          provides the scarce right -> one claim, one financing, consumed once
+            {`          provides the scarce right -> one claim, one gated adapter action
 
-Bank A -> shielded funding -> anonymizer -> claim() -> `}
+wallet -> pool -> anonymizer -> claim() -> `}
             <span style={{ color: "var(--gilt)" }}>ACTIVE</span>
-            {` -> authorizes financing -> market executes -> `}
+            {` -> adapter records position -> `}
             <span style={{ color: "var(--gilt)" }}>CONSUMED</span>
           </motion.div>
 
           <p style={{ fontSize: 18, color: "#413a2b", maxWidth: 740, margin: "24px auto 0", textAlign: "center", lineHeight: 1.6 }}>
-            The venue is downstream of Sole: it can only execute a right Sole has activated, and it refuses a spent one — at this market or a different one entirely. What makes that enforceable is a fourth value, <span className="mono">ExecAuth</span> — minted only for an ACTIVE right, bound to its exact on-chain commitment, and single-use per right. A venue re-derives it itself; it never trusts one supplied by the caller.
+            The adapter is downstream of Sole: its source-level gate accepts an <span className="mono">ExecAuth</span> only
+            for an ACTIVE right and recomputes the nonce from the registry&apos;s commitment. The deployed fallback adapter
+            demonstrates position bookkeeping, not a loan, repayment, asset transfer, or independent-market integration.
           </p>
 
           <div style={{ display: "flex", justifyContent: "center", marginTop: 28 }}>
@@ -379,7 +384,7 @@ Bank A -> shielded funding -> anonymizer -> claim() -> `}
         </div>
       </motion.section>
 
-      {/* PRIVACY BOUNDARY TABLE SECTION */}
+      {/* PRIVACY BOUNDARY SECTION */}
       <motion.section
         initial={{ opacity: 0, y: 36 }}
         whileInView={{ opacity: 1, y: 0 }}
@@ -393,68 +398,23 @@ Bank A -> shielded funding -> anonymizer -> claim() -> `}
               The Privacy Boundary
             </div>
             <h2 style={{ fontSize: 34, fontWeight: 600, letterSpacing: "-.015em", margin: 0 }}>
-              The enforcement state is public. The relationship is private.
+              Registry caller separation is not wallet anonymity.
             </h2>
             <p style={{ fontSize: 17, color: "var(--faded)", marginTop: 8 }}>
-              A vague privacy claim is worse than none, so here is the complete boundary.
+              The registry receives the configured anonymizer as caller. In the recorded bundled flow, a public pool
+              deposit, pool invoke, and registry transition occur in one receipt, so the depositing wallet can be
+              correlated with the slot. The canonical boundary, including what remains opaque, lives in one document.
             </p>
           </div>
-
-          <div style={{ border: "1px solid var(--rule)", overflow: "hidden", borderRadius: 2, boxShadow: "0 4px 18px rgba(0,0,0,0.02)" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15.5 }}>
-              <tbody>
-                <tr>
-                  <th style={thc}>Data Field</th>
-                  <th style={thc}>Public Chain</th>
-                  <th style={thc}>Private Boundary</th>
-                </tr>
-                {[
-                  ["Right state (unclaimed / active / consumed)", "shown", ""],
-                  ["Slot identifier", "queryable*", ""],
-                  ["Claimant identity", "", "hidden"],
-                  ["Funding amount", "", "shielded"],
-                  ["Claimant wallet", "", "anonymizer boundary"],
-                  ["Counterparty relationship", "", "hidden"],
-                ].map(([d, pub, pri], i) => (
-                  <motion.tr
-                    key={i}
-                    whileHover={{ backgroundColor: "rgba(224, 214, 189, 0.55)" }}
-                    style={{ background: i % 2 ? "var(--parch2)" : "var(--parch)", transition: "background-color 0.15s ease" }}
-                  >
-                    <td style={tdc}>{d}</td>
-                    <td style={{ ...tdc, color: "var(--claret)", fontWeight: 600 }}>
-                      {pub && (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
-                          <Eye size={16} /> {pub}
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ ...tdc, color: "var(--faded)" }}>
-                      {pri && (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
-                          <EyeOff size={16} /> {pri}
-                        </span>
-                      )}
-                    </td>
-                  </motion.tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <p style={{ fontSize: 13.5, color: "var(--faded)", marginTop: 16, textAlign: "center" }}>
-            *Anyone holding the canonical id can read a right&apos;s state. Sole hides the economic relationship behind that state, not the fact that a known right is active.
-          </p>
-          <p style={{ fontSize: 13.5, color: "var(--faded)", marginTop: 6, textAlign: "center" }}>
-            This table is a summary. The complete privacy boundary — including what it does not claim and where it
-            reduces privacy anyway — lives in one place:{" "}
+          <p style={{ fontSize: 15.5, color: "var(--faded)", marginTop: 8, textAlign: "center" }}>
+            Read the source of truth before relying on any privacy property:{" "}
             <a
               href="https://github.com/TheWeirdDee/sole/blob/main/docs/PRIVACY_BOUNDARY.md"
               target="_blank" rel="noopener noreferrer" style={{ color: "var(--claret)" }}
             >
               docs/PRIVACY_BOUNDARY.md
             </a>
-            . Every other page restates it; that document decides.
+            . The evidence ledger records the actual receipt fields and fees.
           </p>
         </div>
       </motion.section>

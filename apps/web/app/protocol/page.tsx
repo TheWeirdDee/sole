@@ -33,10 +33,13 @@ export default function Protocol() {
                        `}<span style={c}>CONSUMED</span>{`  (terminal)
 
   forbidden, each asserted and tested:
-    ACTIVE   --claim-->   `}<span style={rr}>REVERT RIGHT_ALREADY_ACTIVE</span>{`   <- the invariant
-    (replay) --settle-->  `}<span style={rr}>REVERT NULLIFIER_ALREADY_SPENT</span>{`
-    (wallet) --any-->     `}<span style={rr}>REVERT CALLER_NOT_ANONYMIZER</span>{`
-    (2nd venue, consumed) `}<span style={rr}>REVERT AUTH_RIGHT_NOT_ACTIVE</span>
+    ACTIVE     --claim-->   `}<span style={rr}>REVERT RIGHT_ALREADY_ACTIVE</span>{`   <- the invariant
+    CONSUMED   --claim-->   `}<span style={rr}>REVERT RIGHT_ALREADY_ACTIVE</span>{`
+    UNCLAIMED  --settle-->  `}<span style={rr}>REVERT RIGHT_NOT_ACTIVE</span>{`
+    consumed slot --settle--> `}<span style={rr}>REVERT RIGHT_NOT_ACTIVE</span>{`
+    reused nullifier on another ACTIVE slot --> `}<span style={rr}>REVERT NULLIFIER_ALREADY_SPENT</span>{`
+    (wallet)   --any-->     `}<span style={rr}>REVERT CALLER_NOT_ANONYMIZER</span>{`
+    (shared-registry adapter, non-ACTIVE) --finance--> `}<span style={rr}>REVERT AUTH_RIGHT_NOT_ACTIVE</span>
       </div>
 
       <h2 style={{ fontSize: 22, fontWeight: 600, margin: "34px 0 12px" }}>The invariant</h2>
@@ -44,9 +47,10 @@ export default function Protocol() {
         {`for every slot_key:
     state in {UNCLAIMED, ACTIVE, CONSUMED}
     state = ACTIVE   => exactly one valid claim commitment
-    state = CONSUMED => no new claim may become ACTIVE, at any venue
+    state = CONSUMED => no new claim may become ACTIVE
+    shared-registry adapter + non-ACTIVE => finance reverts
 and:
-    claimant, amount, counterparty  not in public registry state`}
+    named claimant, raw amount, counterparty  not in public registry state`}
       </div>
 
       <h2 style={{ fontSize: 22, fontWeight: 600, margin: "34px 0 12px" }}>Assumptions we state, not hide</h2>
@@ -54,8 +58,9 @@ and:
         <tbody>
           <tr><th style={th}>Assumption</th><th style={th}>Stance</th></tr>
           <tr><td style={td}>A canonical id maps to one real right (no double-minting)</td><td style={td}>MVP: first-registration-wins. Production: attester-signed root.</td></tr>
-          <tr><td style={td}>Anyone with the canonical id can read a right&apos;s state</td><td style={td}>By design. Low-entropy ids are enumerable; the relationship stays private.</td></tr>
-          <tr><td style={td}>Timing / entry-exit correlation on the shielded legs</td><td style={td}>Shield ahead of time; do not shield-then-immediately-claim.</td></tr>
+          <tr><td style={td}>Anyone with the canonical id can read a right&apos;s state</td><td style={td}>By design. Low-entropy ids are enumerable; see the privacy boundary for the transaction footprint.</td></tr>
+          <tr><td style={td}>Bundled deposit and transition can be correlated</td><td style={td}>Recorded receipts link an indexed depositor, pool invoke, and slot in one transaction. Registry caller separation is not wallet anonymity.</td></tr>
+          <tr><td style={td}>Second independent venue</td><td style={td}>The source/test gate is shared-registry based. The deployed second adapter is not yet verified as an independent venue.</td></tr>
           <tr><td style={td}>Contracts are ownerless and unaudited</td><td style={td}>A finding means a redeploy, not a patch. Adversarial coverage is not an audit.</td></tr>
         </tbody>
       </table>
@@ -69,6 +74,12 @@ and:
         </a>
         . The broader non-claims list and the real problems hit building this:{" "}
         <Link href="/docs" style={{ color: "var(--claret)" }}>the Docs page</Link>.
+      </p>
+
+      <p style={{ fontSize: 13.5, color: "var(--faded)", marginTop: 10 }}>
+        The shared-registry adapter line above is source-and-test evidence, not a recorded mainnet
+        cross-venue rejection. The deployed fallback adapter records and clears an opaque position;
+        it does not demonstrate a loan, asset transfer, or external-market integration.
       </p>
 
       <h2 style={{ fontSize: 22, fontWeight: 600, margin: "34px 0 12px" }}>Roadmap, documented not shipped</h2>

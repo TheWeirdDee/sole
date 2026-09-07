@@ -1,9 +1,8 @@
 "use client";
 // Sole - browser wallet + SoleClient wiring.
 // Connects to the user's Starknet wallet (Ready) via get-starknet discovery,
-// and constructs one SoleClient per venue (finance() targets a fixed adapter
-// address per SoleAddresses, so a second venue needs its own client sharing
-// the same registry/anonymizer/pool).
+// and constructs one SoleClient per configured adapter (finance() targets a
+// fixed adapter address per SoleAddresses).
 
 import { compareVersions, Contract, RpcProvider, walletV6, WalletAccountV6 } from "starknet";
 // createStore() (get-starknet-core >=6, the "next" dist-tag - same pin-past-
@@ -63,27 +62,39 @@ export function getSoleClients() {
   return clientsPromise;
 }
 
-// The cross-venue demonstration is only meaningful if the second adapter is
-// wired to this same registry. Read that immutable configuration directly
-// before describing a refusal as global. This is a public RPC call, never a
-// wallet request. Cache success, but allow a transient RPC failure to be
-// retried by the next explicit check.
-let venue2RegistryPromise: Promise<boolean> | null = null;
-export async function venue2UsesSoleRegistry(): Promise<boolean> {
-  if (!venue2RegistryPromise) {
-    venue2RegistryPromise = (async () => {
+// A second-adapter refusal is only a cross-venue result when it is a distinct
+// adapter, shares the registry, and reports a venue address of its own. Read
+// all three configuration facts before describing it that way. This is a
+// public RPC call, never a wallet request. Cache success, but allow a transient
+// RPC failure to be retried by the next explicit check.
+export type SecondAdapterConfiguration = {
+  isDistinctAdapter: boolean;
+  sharesRegistry: boolean;
+  reportsOwnVenue: boolean;
+};
+
+let secondAdapterConfigurationPromise: Promise<SecondAdapterConfiguration> | null = null;
+export async function secondAdapterConfiguration(): Promise<SecondAdapterConfiguration> {
+  if (!secondAdapterConfigurationPromise) {
+    secondAdapterConfigurationPromise = (async () => {
       const cls: any = await provider.getClassAt(ADAPTER_VENUE_2);
       const adapter = new Contract({
         abi: cls.abi, address: ADAPTER_VENUE_2, providerOrAccount: provider,
       });
-      const configuredRegistry = await adapter.registry();
-      return BigInt(configuredRegistry.toString()) === BigInt(ADDRS.registry);
+      const [configuredRegistry, configuredVenue] = await Promise.all([
+        adapter.registry(), adapter.venue(),
+      ]);
+      return {
+        isDistinctAdapter: BigInt(ADAPTER_VENUE_2) !== BigInt(ADDRS.adapter),
+        sharesRegistry: BigInt(configuredRegistry.toString()) === BigInt(ADDRS.registry),
+        reportsOwnVenue: BigInt(configuredVenue.toString()) === BigInt(ADAPTER_VENUE_2),
+      };
     })();
   }
   try {
-    return await venue2RegistryPromise;
+    return await secondAdapterConfigurationPromise;
   } catch (error) {
-    venue2RegistryPromise = null;
+    secondAdapterConfigurationPromise = null;
     throw error;
   }
 }

@@ -1,24 +1,22 @@
 "use client";
-// Sole demo flow (product invariant). A human drives the whole lifecycle:
-// connect -> register -> claim (private) -> finance (venue executes) ->
-// duplicate refused -> settle (consumed) -> second venue refused -> disclosure.
+// Sole demo flow: connect -> register -> claim -> record adapter position ->
+// duplicate precondition check -> consume -> second-adapter configuration check.
 //
-// Live mode (default) calls the real deployed contracts through the
-// connected wallet via @sole/sdk SoleClient - every action below is a real
-// mainnet transaction, linked to Voyager, reverts shown honestly from the
-// receipt. Demo mode is the offline fallback: the same flow against a local
-// state model with illustrative hashes, for when no wallet is available.
+// Live mode calls deployed contracts through the connected wallet. State-
+// changing controls submit transactions; negative-path and configuration
+// controls are explicitly read-only. Offline mode is illustrative local state:
+// it never opens a wallet, sends a transaction, or creates a transaction hash.
 import { useState, useEffect, useRef } from "react";
 import {
   FileLock2, ShieldCheck, Ban, CheckCircle2, Eye, EyeOff, Landmark, Lock, Wallet, Loader2,
 } from "lucide-react";
 import {
-  ADDRS, connectWallet, getSoleClients, provider, randomFelt, venue2UsesSoleRegistry, voyagerTxUrl,
+  ADDRS, connectWallet, getSoleClients, provider, randomFelt, secondAdapterConfiguration, voyagerTxUrl,
 } from "../lib/sole";
 import { deriveClaimCommitment, hasExactRightRegistration, withTimeout } from "@sole/sdk";
 
 const ink = "#1a160f", parch = "#e9e1ce", parch2 = "#e0d6bd", claret = "#7c1d2a", faded = "#8c8267", rule = "#cabd9d";
-const steps = ["Connect", "Register", "A claims", "A finances", "B refused", "Settle", "2nd venue refused"];
+const steps = ["Connect", "Register", "A claims", "A records position", "B checked", "Consume", "2nd adapter checked"];
 const DEMO_SESSION_KEY = "sole:live-demo-session:v1";
 
 function freshReference() {
@@ -81,8 +79,6 @@ export default function SoleDemo() {
       // The in-memory state still prevents an automatic resubmission.
     }
   };
-  const demoHash = () => "0x" + Array.from({ length: 6 }, () => Math.floor(Math.random() * 65536).toString(16).padStart(4, "0")).join("");
-
   const runExclusive = async (work) => {
     if (actionLock.current) return;
     actionLock.current = true;
@@ -304,13 +300,7 @@ export default function SoleDemo() {
   const enableReadyCompatibilityDeposit = () => {
     if (!live || s.busy || s.readyCompatibilityDeposit) return;
     const approved = window.confirm(
-      "At the currently observed pool fee, Ready may ask you to shield about 12 STRK alongside EACH private Sole action. " +
-      "The exact amount is read live; it is not sponsored L2 gas or a one-time registration charge. You will still approve every action in Ready.",
-      "Use Ready's legacy deposit-plus-invoke shape for this tab? This is a deliberate workaround, not a Sole requirement, and it may not fix a generic payload rejection. " +
-      "At the currently observed pool fee, Ready may ask you to shield about 12 STRK alongside EACH private Sole action. " +
-      "The exact amount is read live; it is not sponsored L2 gas or a one-time registration charge. You will still approve every action in Ready.",
-      "At the currently observed pool fee, Ready may ask you to shield about 12 STRK alongside EACH private Sole action. " +
-      "The exact amount is read live; it is not sponsored L2 gas or a one-time registration charge. You will still approve every action in Ready.",
+      "Use Ready's legacy deposit-plus-invoke shape for this tab? This is a deliberate workaround, not a Sole requirement, and it may not fix a generic payload rejection. At the currently observed pool fee, Ready may ask you to shield about 12 STRK alongside each private Sole action. The exact amount is read live; it is not sponsored L2 gas or a one-time registration charge. You will still approve every action in Ready.",
     );
     if (!approved) return;
     set({
@@ -414,7 +404,7 @@ export default function SoleDemo() {
   const connect = () => runExclusive(async () => {
     if (!live) {
       set({ connected: true, registered: true, proofStateReady: true });
-      push("wallet connected (demo) · register_right(" + s.reference + ") -> UNCLAIMED");
+      push("Illustrative offline setup -> UNCLAIMED. No wallet request, hash, or chain action.");
       return;
     }
     set({ busy: "connect", error: null });
@@ -553,7 +543,7 @@ export default function SoleDemo() {
   const claimA = () => runExclusive(async () => {
     if (!live) {
       set({ state: "ACTIVE", holder: "A", rejected: false });
-      push("Bank A: shield -> anonymizer -> claim() " + demoHash() + " -> ACTIVE (demo)");
+      push("Illustrative offline claim -> ACTIVE. No wallet request, hash, or chain action.");
       return;
     }
     set({ busy: "claimA", error: null });
@@ -630,7 +620,7 @@ export default function SoleDemo() {
   const financeA = () => runExclusive(async () => {
     if (!live) {
       set({ financed: true });
-      push("Sole authorizes financing -> money market executes against the venue " + demoHash() + " (demo)");
+      push("Illustrative offline adapter position record. No wallet request, hash, asset transfer, or chain action.");
       return;
     }
     set({ busy: "financeA", error: null });
@@ -891,7 +881,7 @@ export default function SoleDemo() {
   const claimB = () => runExclusive(async () => {
     if (!live) {
       set({ rejected: true });
-      push("Bank B: claim(same slot) " + demoHash() + " -> REVERT RIGHT_ALREADY_ACTIVE · venue never called (demo)");
+      push("Illustrative offline duplicate check -> RIGHT_ALREADY_ACTIVE. No wallet request, hash, or chain action.");
       return;
     }
     set({ busy: "claimB", error: null });
@@ -922,7 +912,7 @@ export default function SoleDemo() {
   const settle = () => runExclusive(async () => {
     if (!live) {
       set({ state: "CONSUMED", consumed: true, rejected: false });
-      push("Bank A: settle_and_repay() -> venue repaid + nullifier " + demoHash() + " -> CONSUMED (demo)");
+      push("Illustrative offline position clear + consume -> CONSUMED. No wallet request, hash, asset transfer, or chain action.");
       return;
     }
     set({ busy: "settle", error: null });
@@ -955,39 +945,41 @@ export default function SoleDemo() {
   const venue2 = () => runExclusive(async () => {
     if (!live) {
       set({ venue2: true });
-      push("Venue 2 (different market, different lender): finance(same right) " + demoHash() + " -> REVERT · right is spent everywhere (demo)");
+      push("Illustrative offline second-adapter check -> AUTH_RIGHT_NOT_ACTIVE. No wallet request, hash, or chain action.");
       return;
     }
     set({ busy: "venue2", error: null });
     try {
       const { venue1 } = await getSoleClients();
-      // Verify both the shared registry wiring and its current state before
-      // drawing the global-exclusivity conclusion. The adapter's gate checks
-      // for ACTIVE before it can finance; CONSUMED therefore proves this call
-      // would fail AUTH_RIGHT_NOT_ACTIVE. Like Bank B, this intentionally
-      // does not send a known-reverting action through Ready's paymaster.
-      const [record, usesSharedRegistry] = await Promise.all([
+      // A cross-venue conclusion requires a distinct adapter that shares the
+      // registry and reports a venue address of its own. This deployment does
+      // not currently meet all of those conditions, so do not turn a shared
+      // state read into a claimed independent-venue result.
+      const [record, config] = await Promise.all([
         withTimeout(
           venue1.claimRecord(s.reference), 12_000,
-          "could not read the registry to verify the second venue's refusal",
+          "could not read the registry to check the second adapter",
         ),
         withTimeout(
-          venue2UsesSoleRegistry(), 12_000,
-          "could not verify the second venue's registry configuration",
+          secondAdapterConfiguration(), 12_000,
+          "could not read the second adapter's configuration",
         ),
       ]);
-      if (!usesSharedRegistry) {
-        set({ busy: null, error: "The configured second venue is not wired to Sole's registry, so global refusal cannot be verified." });
-        push("Venue 2: no wallet request sent; its configured registry does not match Sole's registry.");
+      if (!config.isDistinctAdapter || !config.sharesRegistry || !config.reportsOwnVenue) {
+        set({
+          busy: null,
+          error: "The deployed second adapter does not currently prove an independent venue configuration. Sole will not present this as a cross-venue result or submit a transaction.",
+        });
+        push("Second adapter: configuration is not a verified independent venue. No wallet request or transaction was sent.");
         return;
       }
       if (record.state !== "CONSUMED") {
-        set({ busy: null, error: `Could not verify second-venue refusal: registry reads ${record.state}, not CONSUMED.` });
-        push(`Venue 2: no wallet request sent; registry reads ${record.state}, so AUTH_RIGHT_NOT_ACTIVE was not asserted.`);
+        set({ busy: null, error: `Could not verify shared-adapter refusal: registry reads ${record.state}, not CONSUMED.` });
+        push(`Second adapter: no wallet request sent; registry reads ${record.state}, so AUTH_RIGHT_NOT_ACTIVE was not asserted.`);
         return;
       }
       set({ busy: null, venue2: true, error: null });
-      push("Venue 2: shared registry confirms CONSUMED. Its finance gate would revert AUTH_RIGHT_NOT_ACTIVE. No Ready request or transaction was sent.");
+      push("Second adapter: shared registry confirms CONSUMED. Its finance gate would revert AUTH_RIGHT_NOT_ACTIVE. No Ready request or transaction was sent.");
     } catch (e) {
       set({ busy: null, error: `${describeError(e)}. No wallet request or transaction was sent.` });
     }
@@ -1016,15 +1008,21 @@ export default function SoleDemo() {
         <button onClick={toggleMode} disabled={!!s.busy || s.claimOutcomeUnknown || holdsLocalClaim} style={{
           fontSize: 12.5, border: `1px solid ${rule}`, background: "transparent", color: faded,
           padding: "5px 10px", borderRadius: 2, cursor: s.busy || s.claimOutcomeUnknown || holdsLocalClaim ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
-          mode: <strong style={{ color: live ? claret : ink }}>{live ? "live (mainnet)" : "demo (offline)"}</strong> — switch
+          mode: <strong style={{ color: live ? claret : ink }}>{live ? "live (mainnet)" : "illustrative (offline)"}</strong> — switch
         </button>
       </div>
-      <h1 style={{ fontSize: 34, fontWeight: 600, letterSpacing: "-.015em", margin: 0 }}>Finance a right. Then try to finance it twice — anywhere.</h1>
+      <h1 style={{ fontSize: 34, fontWeight: 600, letterSpacing: "-.015em", margin: 0 }}>Exercise the execution gate. Then inspect its limits.</h1>
       <p style={{ fontSize: 19, color: "#413a2b", maxWidth: 660, marginTop: 12 }}>
-        Bank A privately claims the right and finances it against a market. Bank B is refused. After
-        settlement, a second, unrelated venue is refused too. Fixture data is labelled as a fixture —
-        the registry knows nothing about receivables; it enforces a single-use right over a commitment.
+        Live mode claims a right through the pool and records one opaque adapter position while it is ACTIVE.
+        The deployed fallback adapter does not move assets, issue credit, or call an external market. Bank B and
+        the second-adapter controls are read-only precondition checks, not live reverted transactions.
       </p>
+      {!live && (
+        <div style={{ border: `1px solid ${claret}`, background: "#f6ece9", color: "#4a2a2c", padding: "10px 13px", marginTop: 14, fontSize: 13, lineHeight: 1.45 }}>
+          <strong>Illustrative offline mode.</strong> This local state model never opens Ready, sends a transaction,
+          moves assets, or displays a transaction hash.
+        </div>
+      )}
       {live && (
         <p style={{ fontSize: 13, color: faded, marginTop: 6 }}>
           On-chain reference for this tab: <span className="mono">{s.reference}</span>. Reconnecting keeps this reference
@@ -1128,7 +1126,7 @@ export default function SoleDemo() {
 
       {/* the right */}
       <div style={{ border: `1px solid ${rule}`, background: parch2, padding: 24, margin: "22px 0", position: "relative", overflow: "hidden" }}>
-        <div style={{ fontSize: 13, color: faded }}>Canonical right</div>
+        <div style={{ fontSize: 13, color: faded }}>Canonical-right fixture</div>
         <div style={{ fontSize: 22, fontWeight: 600, margin: "3px 0 8px" }}>Receivable RCV-4821</div>
         <div style={{ fontSize: 14 }}>State &nbsp; <strong style={{ color: s.state === "CONSUMED" ? ink : claret }}>{s.state}</strong></div>
         {live && !s.registered && (
@@ -1139,7 +1137,7 @@ export default function SoleDemo() {
         )}
         {s.holder && s.state === "ACTIVE" && (
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 14, background: claret, color: parch, padding: "8px 14px", borderRadius: 2 }}>
-            <Lock size={15} /> Right held. Claimant sealed.
+            <Lock size={15} /> Right ACTIVE. Opaque claim commitment recorded.
           </div>
         )}
         {live && s.state === "ACTIVE" && !s.holder && (
@@ -1161,7 +1159,9 @@ export default function SoleDemo() {
             Because the public registry reads <code style={{ background: "#e9d6d3", padding: "1px 6px" }}>ACTIVE</code>, a fresh
             claim would revert <code style={{ background: "#e9d6d3", padding: "1px 6px" }}>RIGHT_ALREADY_ACTIVE</code>. Ready
             predicts that failure and will not sponsor it, so Sole sends no wallet request or transaction.
-            Bank B learns the receivable is already claimed, but <strong>not</strong> who claimed it, the funding amount, or the counterparty.
+             The registry read exposes ACTIVE state and an opaque commitment, not named claimant, raw position amount,
+             or counterparty fields. It does not establish transaction-level wallet unlinkability; the public receipt
+             boundary is documented in <a href="/docs" style={{ color: claret }}>Docs</a>.
           </div>
         </div>
       )}
@@ -1187,7 +1187,7 @@ export default function SoleDemo() {
         </div>
       )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <Actor who="Bank A" role="acquires and finances the right">
+        <Actor who="Bank A" role="claims and records one adapter position">
           {live && s.connected && !s.registered && (
             <>
               <p style={{ fontSize: 12.5, color: claret, margin: "0 0 2px", lineHeight: 1.45 }}>
@@ -1231,7 +1231,7 @@ export default function SoleDemo() {
             </>
           )}
           <Btn onClick={claimA} disabled={s.state !== "UNCLAIMED" || !s.connected || !s.registered || !s.proofStateReady || !!s.busy || s.claimOutcomeUnknown} icon={s.busy === "claimA" ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />} primary>
-            {s.busy === "claimA" ? "Claiming…" : !s.registered ? "Register this right first" : !s.proofStateReady ? "Waiting for proof maturity…" : s.readyCompatibilityDeposit ? "Claim privately (compatibility deposit)" : "Claim privately"}
+            {s.busy === "claimA" ? "Claiming…" : !s.registered ? "Register this right first" : !s.proofStateReady ? "Waiting for proof maturity…" : s.readyCompatibilityDeposit ? "Claim through pool (compatibility deposit)" : "Claim through pool"}
           </Btn>
           {live && s.connected && (
             <Btn
@@ -1249,11 +1249,11 @@ export default function SoleDemo() {
           )}
           {s.state === "ACTIVE" && s.holder === "A" && !s.financed && (
             <Btn onClick={financeA} disabled={!!s.busy || !s.proofStateReady || s.claimOutcomeUnknown} icon={s.busy === "financeA" ? <Loader2 size={16} className="spin" /> : <Landmark size={16} />} primary>
-              {s.busy === "financeA" ? "Financing…" : !s.proofStateReady ? "Waiting for claim maturity…" : "Finance held right"}
+               {s.busy === "financeA" ? "Recording…" : !s.proofStateReady ? "Waiting for claim maturity…" : "Record adapter position"}
             </Btn>
           )}
           <Btn onClick={settle} disabled={s.state !== "ACTIVE" || s.holder !== "A" || !s.financed || !s.proofStateReady || !!s.busy || s.claimOutcomeUnknown} icon={s.busy === "settle" ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}>
-            {s.busy === "settle" ? "Settling…" : "Settle & consume"}
+            {s.busy === "settle" ? "Consuming…" : "Clear position & consume"}
           </Btn>
           {/* Wallet-issuing actions all share one busy lock (see the note by
               the "Stuck?" link above) - concurrent requests wedge Ready's
@@ -1275,10 +1275,10 @@ export default function SoleDemo() {
       {/* cross venue */}
       {s.consumed && (
         <div style={{ border: `1px solid ${rule}`, background: parch2, padding: 24, marginTop: 18 }}>
-          <h3 style={{ fontSize: 19, margin: "0 0 4px" }}>A different venue, later</h3>
-          <p style={{ fontSize: 13, color: faded, margin: "0 0 14px" }}>The right is consumed. Sole verifies that this adapter is wired to the same registry, then checks the shared state. A second venue cannot finance a consumed right, and it never learns who financed it first.</p>
+          <h3 style={{ fontSize: 19, margin: "0 0 4px" }}>Second-adapter configuration</h3>
+          <p style={{ fontSize: 13, color: faded, margin: "0 0 14px" }}>A shared-registry adapter with a non-ACTIVE right reaches <code>AUTH_RIGHT_NOT_ACTIVE</code> in source and tests. The deployed second adapter must also prove that it is distinct and reports its own venue before this UI calls it a cross-venue result.</p>
           <Btn onClick={venue2} disabled={s.venue2 || !!s.busy || s.claimOutcomeUnknown} icon={s.busy === "venue2" ? <Loader2 size={16} className="spin" /> : <Ban size={16} />} danger>
-            {s.busy === "venue2" ? "Verifying…" : "Verify second-venue refusal (no gas)"}
+            {s.busy === "venue2" ? "Checking…" : "Check second-adapter configuration (no gas)"}
           </Btn>
           {s.venue2 && <p style={{ fontSize: 13, color: claret, marginTop: 10, fontFamily: "ui-monospace,Menlo,monospace" }}>shared registry is CONSUMED · finance would fail AUTH_RIGHT_NOT_ACTIVE · no wallet request or transaction sent</p>}
         </div>
@@ -1289,7 +1289,7 @@ export default function SoleDemo() {
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <Eye size={18} color={claret} /><h2 style={{ margin: 0, fontSize: 21, fontWeight: 600 }}>What each party sees</h2>
         </div>
-        <p style={{ fontSize: 13, color: faded, marginBottom: 14 }}>Same underlying private state, four scoped projections.</p>
+        <p style={{ fontSize: 13, color: faded, marginBottom: 14 }}>Illustrative client-side projections only. The deployed contracts do not implement scoped disclosure or an auditor-key system.</p>
         <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
           {["public", "holder", "counterparty", "auditor"].map((v) => (
             <button key={v} onClick={() => set({ view: v })} style={{
@@ -1339,10 +1339,10 @@ function Btn({ children, onClick, disabled, icon, primary, danger }) {
 }
 function Projection({ view, state, holder }) {
   const rows = {
-    public: [["Right state", state, true], ["Slot identifier", "queryable with canonical id", true], ["Claimant", "hidden", false], ["Funding amount", "hidden", false], ["Counterparty", "hidden", false]],
-    holder: [["Right state", state, true], ["This is my claim", holder ? "yes" : "—", true], ["Funding amount", "known to me", true], ["Settlement", state === "CONSUMED" ? "settled" : "open", true]],
-    counterparty: [["Obligation satisfied", state === "CONSUMED" ? "yes" : "not yet", true], ["Claimant identity", "hidden", false], ["Funding amount", "hidden", false]],
-    auditor: [["Canonical right", "RCV-4821", true], ["Lifecycle", "registered -> active -> consumed", true], ["Claimant", "disclosed under scoped key", true], ["Funding note", "disclosed under scoped key", true], ["Timestamps", "disclosed under scoped key", true]],
+    public: [["Registry state", state, true], ["Slot identifier", "queryable with canonical id", true], ["Registry event fields", "slot + opaque commitment", true], ["Bundled receipt", "indexed depositor can correlate to the slot", true]],
+    holder: [["Local fixture state", holder ? "Bank A holds the local model" : "—", true], ["Local claim preimage", holder ? "kept in this tab" : "—", true], ["On-chain access control", "not a holder-view feature", true]],
+    counterparty: [["Client-side projection", "illustrative only", true], ["Counterparty access control", "not implemented on-chain", true], ["Raw position amount", "not carried in registry events", false]],
+    auditor: [["Client-side projection", "illustrative only", true], ["Auditor key", "not implemented", true], ["Disclosure protocol", "not implemented", true]],
   }[view];
   return (
     <div style={{ border: `1px solid ${rule}` }}>

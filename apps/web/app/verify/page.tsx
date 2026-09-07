@@ -46,10 +46,9 @@ export default function Verify() {
     const hashes: string[] = (claims as any).transactions?.map((t: any) => t.hash) ?? [];
     if (hashes.length === 0) {
       setLog(
-        "no transactions recorded in evidence/claims.json yet.\n" +
-        "Contracts are deployed and wired (see the mainnet deployments table on the Overview page),\n" +
-        "but the pool-touching transactions (claim/finance/settle) haven't been run through a live\n" +
-        "wallet session yet. Nothing to replay here - this view reads real data, not a canned demo."
+        "no transactions are recorded in evidence/claims.json.\n" +
+        "Add a hash and its expected receipt facts to the evidence ledger before treating it as proof.\n" +
+        "This view reads live RPC data; it never invents a result."
       );
       return;
     }
@@ -79,9 +78,10 @@ export default function Verify() {
       </h1>
       <p style={{ fontSize: 19, color: "#413a2b", maxWidth: 660, marginTop: 12 }}>
         Paste a transaction hash, or run the whole recorded set. The verifier re-reads the receipt
-        from a mainnet RPC, confirms it was emitted by the Sole registry, checks it routed through
-        the anonymizer, and decodes the transition it must represent. A refusal must have moved no
-        state.
+        from a mainnet RPC, checks the expected Sole event, and for pool-routed actions checks the
+        pool&apos;s exact <span className="mono">privacy_invoke</span> event for the configured anonymizer. A supplied
+        rejection is checked for its revert reason and absence of registry state events; no rejection
+        receipt is currently in the recorded set.
       </p>
 
       <div style={{ border: "1px solid var(--rule)", background: "var(--parch2)", padding: 26, marginTop: 26 }}>
@@ -109,7 +109,8 @@ export default function Verify() {
       </div>
       <p style={{ fontSize: 13, color: "var(--faded)", marginTop: 12 }}>
         Same logic as <span className="mono">scripts/verify-mainnet.ts</span>, reading a mainnet RPC
-        directly from the browser - not a replay of recorded evidence.
+        directly from the browser. The recorded hashes choose which receipts to fetch; the results are
+        live reads, not canned replay results.
       </p>
     </main>
   );
