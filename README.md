@@ -147,4 +147,6 @@ known-reverting negative path. Wallet setup and compatibility details are in
 
 Live site: [sole-web-app.vercel.app](https://sole-web-app.vercel.app/)
 
+Demo video: [youtu.be/TX74QG-1U6g](https://youtu.be/TX74QG-1U6g)
+
 Apache-2.0.
