@@ -30,6 +30,7 @@ type LedgerTransaction = {
   kind?: string;
   block_number?: number;
   expected_event?: string;
+  expected_revert?: string;
   actual_fee_fri?: string;
   pool_deposit_fri?: string | null;
   pool_fee_withdrawal_fri?: string | null;
@@ -85,21 +86,59 @@ function expectedEventPresent(entry: LedgerTransaction, registryEvents: any[], a
   }
 }
 
+function verifyRecordedBlockAndFee(entry: LedgerTransaction, receipt: any) {
+  if (entry.block_number === undefined) {
+    fail("ledger rejection is missing its recorded block number");
+  }
+  if (Number(receipt.block_number) === entry.block_number) ok(`block ${entry.block_number}`);
+  else fail(`block ${receipt.block_number} differs from ledger block ${entry.block_number}`);
+
+  if (!entry.actual_fee_fri) fail("ledger rejection is missing its recorded actual fee");
+  const feeRaw = receipt.actual_fee?.amount ?? receipt.actual_fee;
+  if (feeRaw == null) fail("receipt has no actual_fee");
+  if (!sameFelt(feeRaw, entry.actual_fee_fri)) {
+    fail(`actual fee ${feeRaw} differs from ledger ${entry.actual_fee_fri}`);
+  }
+  ok(`actual L2 fee ${formatFri(feeRaw)} (${feeRaw} FRI)`);
+}
+
+function verifyDuplicateClaimRejection(entry: LedgerTransaction, receipt: any) {
+  if (receipt.execution_status !== "REVERTED") {
+    fail(`duplicate-claim rejection is ${receipt.execution_status ?? "missing"}, not REVERTED`);
+  }
+  if (entry.expected_revert !== "RIGHT_ALREADY_ACTIVE") {
+    fail("duplicate-claim rejection must record expected_revert RIGHT_ALREADY_ACTIVE");
+  }
+  const reason = receipt.revert_reason ?? "";
+  if (!reason.includes(entry.expected_revert)) {
+    fail(`reverted for an unexpected reason: ${reason || "missing revert reason"}`);
+  }
+  ok(`expected rejection: ${entry.expected_revert}`);
+  verifyRecordedBlockAndFee(entry, receipt);
+
+  const registryEvents = (receipt.events ?? []).filter(
+    (event: any) => event.from_address != null && sameFelt(event.from_address, deployment.registry),
+  );
+  const adapterEvents = (receipt.events ?? []).filter(
+    (event: any) => event.from_address != null
+      && adapterAddrs.some((address) => sameFelt(event.from_address, address)),
+  );
+  if (registryEvents.length !== 0 || adapterEvents.length !== 0) {
+    fail("rejected duplicate claim unexpectedly emitted a Sole state-transition event");
+  }
+  ok("no registry or adapter state-transition event emitted");
+}
+
 async function verify(entry: LedgerTransaction) {
   console.log(`\nverifying ${entry.hash}`);
   const receipt: any = await provider.getTransactionReceipt(entry.hash);
+  if (entry.kind === "duplicate-claim-rejection") {
+    verifyDuplicateClaimRejection(entry, receipt);
+    return;
+  }
+
   if (receipt.execution_status === "REVERTED") {
-    const reason = receipt.revert_reason ?? "";
-    if (reason.includes("RIGHT_ALREADY_ACTIVE") || reason.includes("AUTH_RIGHT_NOT_ACTIVE")) {
-      ok(`expected rejection: ${reason}`);
-      const registryEvents = (receipt.events ?? []).filter(
-        (event: any) => event.from_address != null && sameFelt(event.from_address, deployment.registry),
-      );
-      if (registryEvents.length === 0) ok("no registry state-changing event emitted");
-      else fail("rejected transaction unexpectedly emitted a registry event");
-      return;
-    }
-    fail(`reverted for an unexpected reason: ${reason}`);
+    fail(`receipt reverted but ledger entry is not a declared rejection: ${receipt.revert_reason ?? "missing revert reason"}`);
   }
 
   if (receipt.execution_status !== "SUCCEEDED") {
