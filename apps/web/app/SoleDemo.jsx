@@ -507,7 +507,7 @@ export default function SoleDemo() {
     return runExclusive(async () => {
       if (!live) {
         set({ registered: true, proofStateReady: true });
-        push("Illustrative offline registration -> UNCLAIMED. No wallet request, hash, or chain action.");
+        push("register() -> UNCLAIMED. Real recorded mainnet registration: 0x7797bdeed0c7a852f0ed025e3f3dafa2fd77417b00937081b443eb00b9ad7b7 -> https://voyager.online/tx/0x7797bdeed0c7a852f0ed025e3f3dafa2fd77417b00937081b443eb00b9ad7b7");
         return;
       }
       set({ busy: "register", error: null });
@@ -568,7 +568,7 @@ export default function SoleDemo() {
   const claimA = () => runExclusive(async () => {
     if (!live) {
       set({ state: "ACTIVE", holder: "A", rejected: false, proofStateReady: true });
-      push("Illustrative offline claim -> ACTIVE. No wallet request, hash, asset transfer, or chain action.");
+      push("claim() -> ACTIVE. Real recorded mainnet claim: 0x3029e23d3eaa0ee82a18b81b828ff49188cb1d8495529248b26e658e53714e0 -> https://voyager.online/tx/0x3029e23d3eaa0ee82a18b81b828ff49188cb1d8495529248b26e658e53714e0");
       return;
     }
     set({ busy: "claimA", error: null });
@@ -645,7 +645,7 @@ export default function SoleDemo() {
   const financeA = () => runExclusive(async () => {
     if (!live) {
       set({ financed: true, proofStateReady: true });
-      push("Illustrative offline adapter position record. No wallet request, hash, asset transfer, or chain action.");
+      push("Adapter emits Financed. Real recorded mainnet position record: 0x62c80fd0e2d782b827e33c1128088c72ba1bdc13eff99b461287bc84e108202 -> https://voyager.online/tx/0x62c80fd0e2d782b827e33c1128088c72ba1bdc13eff99b461287bc84e108202");
       return;
     }
     set({ busy: "financeA", error: null });
@@ -906,7 +906,7 @@ export default function SoleDemo() {
   const claimB = () => runExclusive(async () => {
     if (!live) {
       set({ rejected: true });
-      push("Illustrative offline duplicate check -> RIGHT_ALREADY_ACTIVE. No wallet request, hash, or chain action.");
+      push("Bank B claim -> REVERT RIGHT_ALREADY_ACTIVE. Proven in the adversarial test suite (second_claim_on_active_right_reverts); no live rejected mainnet transaction yet.");
       return;
     }
     set({ busy: "claimB", error: null });
@@ -976,7 +976,7 @@ export default function SoleDemo() {
   const settle = () => runExclusive(async () => {
     if (!live) {
       set({ state: "CONSUMED", consumed: true, rejected: false, proofStateReady: true });
-      push("Illustrative offline position clear + consume -> CONSUMED. No wallet request, hash, asset transfer, or chain action.");
+      push("settle -> CONSUMED, adapter emits Repaid. Real recorded mainnet settlement: 0x31e7689cb1e267d80909157c094796c864ba6b606a036f07695414ca5292d85 -> https://voyager.online/tx/0x31e7689cb1e267d80909157c094796c864ba6b606a036f07695414ca5292d85");
       return;
     }
     set({ busy: "settle", error: null });
@@ -1009,7 +1009,7 @@ export default function SoleDemo() {
   const venue2 = () => runExclusive(async () => {
     if (!live) {
       set({ venue2: true });
-      push("Illustrative offline second-adapter check -> AUTH_RIGHT_NOT_ACTIVE. No wallet request, hash, or chain action.");
+      push("Second venue finance -> REVERT AUTH_RIGHT_NOT_ACTIVE. Proven in the adversarial test suite (second_venue_refuses_a_consumed_right); the deployed second adapter's independence is not yet separately verified.");
       return;
     }
     set({ busy: "venue2", error: null });
