@@ -951,6 +951,7 @@ export default function SoleDemo() {
       const fundingB = randomFelt();
       const { call, proof, claimCommitment } = await venue1.prepareClaimForSelfPaidSubmission(
         s.account, s.reference, secretB, fundingB,
+        { useCompanionDeposit: s.readyCompatibilityDeposit },
       );
       const payload = JSON.stringify({ reference: s.reference, claimCommitment, call, proof }, null, 2);
       let copied = false;
