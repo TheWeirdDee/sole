@@ -934,6 +934,44 @@ export default function SoleDemo() {
     }
   });
 
+  // Builds the REAL proof for a duplicate claim - not a dry-run - without
+  // submitting it. Ready's paymaster refuses to sponsor a call it predicts
+  // will revert, so the only way to land that revert as a real receipt is a
+  // plain, non-wallet account submitting it directly with explicit resource
+  // bounds (see scripts/submit-self-paid-claim.ts). Proof generation is
+  // agnostic to whether the eventual on-chain call reverts, so Ready builds
+  // it the same as any other claim; this may still prompt a Ready
+  // confirmation even though nothing is submitted to the network here.
+  const prepareDuplicateProof = () => runExclusive(async () => {
+    if (!live || !s.connected) return;
+    set({ busy: "prepareDuplicate", error: null });
+    try {
+      const { venue1 } = await getSoleClients();
+      const secretB = randomFelt();
+      const fundingB = randomFelt();
+      const { call, proof, claimCommitment } = await venue1.prepareClaimForSelfPaidSubmission(
+        s.account, s.reference, secretB, fundingB,
+      );
+      const payload = JSON.stringify({ reference: s.reference, claimCommitment, call, proof }, null, 2);
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(payload);
+        copied = true;
+      } catch {
+        // Clipboard access can be denied; the payload is still logged below.
+      }
+      push(
+        `Bank B: built a real duplicate-claim proof (${payload.length} bytes)${copied ? " and copied it to the clipboard" : ""
+        }. Paste it into scripts/self-paid-claim-input.json, then run scripts/submit-self-paid-claim.ts - ` +
+        "that submits it directly via a plain funded account, no Ready, no paymaster, no preflight, so the revert lands as a real receipt.",
+      );
+      if (!copied) push(payload);
+      set({ busy: null });
+    } catch (e) {
+      set({ busy: null, error: `Could not build the duplicate-claim proof: ${describeError(e)}` });
+    }
+  });
+
   const settle = () => runExclusive(async () => {
     if (!live) {
       set({ state: "CONSUMED", consumed: true, rejected: false, proofStateReady: true });
@@ -1298,6 +1336,18 @@ export default function SoleDemo() {
             {s.busy === "claimB" ? "Verifying…" : "Verify duplicate refusal (no gas)"}
           </Btn>
           <p style={{ fontSize: 13, color: faded, marginTop: 4 }}>Reads the shared registry directly. It does not open Ready, submit a transaction, or use a database.</p>
+          {live && s.state === "ACTIVE" && (
+            <>
+              <Btn onClick={prepareDuplicateProof} disabled={!!s.busy || s.claimOutcomeUnknown} icon={s.busy === "prepareDuplicate" ? <Loader2 size={16} className="spin" /> : <Eye size={16} />}>
+                {s.busy === "prepareDuplicate" ? "Building real proof…" : "Debug: build real duplicate-claim proof (no gas yet)"}
+              </Btn>
+              <p style={{ fontSize: 12.5, color: faded, marginTop: 4 }}>
+                Builds the real ZK proof for an actual duplicate claim without submitting it. A separate script then
+                submits it directly via a plain funded account, bypassing Ready's paymaster preflight entirely, so
+                the RIGHT_ALREADY_ACTIVE revert lands as a real, verifiable mainnet receipt.
+              </p>
+            </>
+          )}
         </Actor>
       </div>
 
