@@ -1,17 +1,18 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { Nav } from "../components/Nav";
+import { Footer } from "../components/Footer";
 import { SmoothScroll } from "../components/SmoothScroll";
 
 export const metadata: Metadata = {
-  title: "Sole — private exclusivity for economic rights",
+  title: "Sole — a single-use execution-right state machine",
   description:
-    "A right can be privately held, publicly enforceable, and consumed exactly once. Built on STRK20.",
+    "A public state machine with anonymizer-gated transitions, explicit evidence, and documented limits.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
@@ -23,22 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <SmoothScroll>
           <Nav />
           {children}
-          <footer
-            style={{
-              borderTop: "1px solid var(--rule)",
-              padding: "40px 0",
-              color: "var(--faded)",
-              fontSize: 14,
-              marginTop: 40,
-            }}
-          >
-            <div style={{ maxWidth: 1040, margin: "0 auto", padding: "0 26px", textAlign: "center" }}>
-              <div>Sole · a single-use execution-right protocol for economic rights on STRK20 · Apache-2.0</div>
-              <div style={{ fontSize: 12, marginTop: 8 }}>
-                Demo fixture data is labelled as fixture. The registry is use-case agnostic.
-              </div>
-            </div>
-          </footer>
+          <Footer />
         </SmoothScroll>
       </body>
     </html>
