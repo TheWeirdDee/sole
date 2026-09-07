@@ -97,7 +97,13 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, message: string)
 }
 
 const READY_SUBMISSION_TIMEOUT_MS = 180_000;
+// A no-gas preparation with simulate=true skips real proof generation by
+// design (per strk20PrepareInvoke's own docs), so 30s is generous for it.
 const READY_PREPARATION_TIMEOUT_MS = 30_000;
+// simulate=false does NOT skip proof generation - it's the expensive path
+// that skip exists to avoid. Reusing the 30s dry-run budget for a real
+// proof build was wrong; give it the same room as an actual submission.
+const READY_REAL_PROOF_TIMEOUT_MS = 180_000;
 const INVALID_REQUEST_PAYLOAD_CODE = 114;
 const INSUFFICIENT_PRIVATE_BALANCE_CODE = 119;
 
@@ -613,8 +619,8 @@ export class SoleClient {
     );
     const { call, proof } = await withTimeout(
       account.strk20PrepareInvoke(actions, false),
-      READY_PREPARATION_TIMEOUT_MS,
-      "Ready did not finish building the real proof after ~30 seconds",
+      READY_REAL_PROOF_TIMEOUT_MS,
+      "Ready did not finish building the real proof after ~3 minutes",
     );
     return { call, proof, claimCommitment };
   }
