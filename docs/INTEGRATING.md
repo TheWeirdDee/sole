@@ -1,6 +1,9 @@
 # Integrating Sole
 
-Build a private-rights application without cloning this repo.
+Build an application around Sole's registry and adapter gate without cloning
+this repo. The deployed fallback adapter records and clears an opaque position;
+it does not transfer assets, issue credit, or integrate an external market.
+Read [`NON_CLAIMS.md`](./NON_CLAIMS.md) before presenting it as financing.
 
 ## Install
 ```
@@ -32,11 +35,11 @@ const sole = new SoleClient(
 const ref = "RCV-4821";                          // your app's asset reference
 if (await sole.isClaimable(ref)) {               // "can I safely claim this?"
   await sole.register(account, ref);             // -> UNCLAIMED (direct call, no privacy_invoke)
-  const { claimCommitment } = await sole.claim(  // -> ACTIVE (via privacy_invoke, mints exec auth)
+  const { claimCommitment } = await sole.claim(  // -> ACTIVE (via privacy_invoke)
     account, ref, claimantSecret, fundingNote);
 }
 // later:
-await sole.finance(account, ref, claimCommitment, amountCommitment); // venue executes
+await sole.finance(account, ref, claimCommitment, amountCommitment); // adapter records opaque position
 await sole.settleAndRepay(account, ref, claimantSecret, claimCommitment); // -> CONSUMED
 ```
 
@@ -54,7 +57,9 @@ The wallet builds the private proof and its own fee action. The user therefore
 needs enough shielded STRK for that fee; Sole does not silently top it up from
 the user's public balance. The helper dispatches into
 `ClaimAnonymizer::privacy_invoke`, so the registry records the anonymizer as
-caller, never the wallet. Sole's helper returns an empty
+caller, not the wallet. This is not a wallet-unlinkability guarantee: in the
+recorded deposit-plus-invoke receipts, a public pool deposit, pool invocation,
+and Sole slot occur atomically. Sole's helper returns an empty
 `Span<OpenNoteDeposit>` for these operations. Do **not** call the registry
 directly: it reverts `CALLER_NOT_ANONYMIZER`, by design.
 
@@ -81,7 +86,7 @@ await sole.claim(
 
 That optional legacy mode builds the older `[deposit, invoke]` shape. Its
 companion deposit is twice the current live flat fee, not a hard-coded amount
-(for example, 12 STRK when the live fee is 6 STRK). It may appear as a gross
+  (for example, 12 STRK when the live fee is 6 STRK). It may appear as a gross
 public shield in Ready; it is not an automatic or protocol-required extra gas
 charge. The wallet controls the exact fee and shielded-balance accounting, so
 show the wallet's quoted amount to the user before submission. A code 119
@@ -91,6 +96,8 @@ legacy shape may not resolve a code-114 rejection; never turn repeated
 compatibility attempts into an automatic paid loop.
 
 ## What you get
-- `isClaimable(ref)` — availability without learning the holder.
-- `publicView / counterpartyView` — scoped projections.
+- `isClaimable(ref)` — availability from public registry state; no holder field
+  is returned by that query.
+- `publicView / counterpartyView` — local convenience projections, not a
+  deployed scoped-disclosure system.
 - Derivation helpers (`deriveSlotKey`, `deriveClaimCommitment`, `deriveNullifier`) with Cairo parity.
