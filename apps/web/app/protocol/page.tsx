@@ -59,6 +59,17 @@ and:
           <tr><td style={td}>Contracts are ownerless and unaudited</td><td style={td}>A finding means a redeploy, not a patch. Adversarial coverage is not an audit.</td></tr>
         </tbody>
       </table>
+      <p style={{ fontSize: 13.5, color: "var(--faded)", marginTop: 10 }}>
+        The two privacy-related rows above are a summary. The complete privacy boundary and what it does not claim:{" "}
+        <a
+          href="https://github.com/TheWeirdDee/sole/blob/main/docs/PRIVACY_BOUNDARY.md"
+          target="_blank" rel="noopener noreferrer" style={{ color: "var(--claret)" }}
+        >
+          docs/PRIVACY_BOUNDARY.md
+        </a>
+        . The broader non-claims list and the real problems hit building this:{" "}
+        <Link href="/docs" style={{ color: "var(--claret)" }}>the Docs page</Link>.
+      </p>
 
       <h2 style={{ fontSize: 22, fontWeight: 600, margin: "34px 0 12px" }}>Roadmap, documented not shipped</h2>
       <p style={{ fontSize: 19, color: "#413a2b", maxWidth: 660 }}>
