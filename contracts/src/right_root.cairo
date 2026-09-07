@@ -4,7 +4,7 @@
 // Separates THREE concerns the protocol keeps distinct (see DECISIONS.md D-003):
 //   1. What is the right?        -> canonical_asset_id -> slot_key  (identity)
 //   2. Who is trusted to say it exists?  -> RightRoot               (input trust)
-//   3. Who privately owns it?    -> claim_commitment / nullifier    (ownership)
+//   3. Which opaque claim can consume it? -> claim_commitment / nullifier
 //
 // The RightsRegistry is root-agnostic: it enforces exclusivity over whatever
 // slot_key a root produces. Swapping the root NEVER changes the exclusivity
