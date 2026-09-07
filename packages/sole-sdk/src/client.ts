@@ -591,6 +591,34 @@ export class SoleClient {
     return this.prepareInvoke(account, actions, options.useCompanionDeposit !== true);
   }
 
+  /** Builds the REAL proof for a claim() call - not a dry-run - without
+   *  submitting it, for a caller that will submit it separately via a plain
+   *  account's own execute() with explicit resource bounds. Used to capture
+   *  a genuine on-chain revert (e.g. a duplicate claim) that Ready's own
+   *  paymaster refuses to sponsor because its pre-flight predicts the
+   *  failure: proof generation proves knowledge of a valid shielded
+   *  claimant/funding note, which is independent of whether the eventual
+   *  on-chain call succeeds or reverts, so Ready can build this proof even
+   *  for a claim destined to fail. This only asks Ready to prepare - it
+   *  reaches no network beyond that until the caller submits {call, proof}
+   *  itself. */
+  async prepareClaimForSelfPaidSubmission(
+    account: SoleAccount, reference: string, claimantSecret: Felt, fundingNote: Felt,
+    options: PrivacyInvokeOptions = {},
+  ): Promise<{ call: any; proof: any; claimCommitment: Felt }> {
+    const slotKey = this.slotKeyFor(reference);
+    const claimCommitment = deriveClaimCommitment(slotKey, claimantSecret, fundingNote);
+    const actions = await this.buildActions(
+      ClaimOperation.Claim, { slotKey, claimCommitment }, options.useCompanionDeposit === true,
+    );
+    const { call, proof } = await withTimeout(
+      account.strk20PrepareInvoke(actions, false),
+      READY_PREPARATION_TIMEOUT_MS,
+      "Ready did not finish building the real proof after ~30 seconds",
+    );
+    return { call, proof, claimCommitment };
+  }
+
   private async privacyInvoke(
     account: SoleAccount, operation: ClaimOperation, args: PrivacyInvokeArgs, expectAddress: Felt,
     verifyReceipt?: (receipt: any) => boolean,
