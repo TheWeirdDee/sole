@@ -7,7 +7,7 @@
 // the STRK20 pool's privacy_invoke so the caller wallet never links to the
 // claim (see docs/INTEGRATING.md for the exact wiring).
 
-import { Contract, RpcProvider, type AccountInterface, type WalletAccountV6 } from "starknet";
+import { Contract, hash, RpcProvider, type AccountInterface, type WalletAccountV6 } from "starknet";
 import {
   canonicalAssetId, deriveClaimCommitment, deriveNullifier, deriveExecNonce, deriveSlotKey, type Felt,
 } from "./derive.ts";
@@ -34,6 +34,27 @@ export const RightState = {
 } as const;
 export type RightState = typeof RightState[keyof typeof RightState];
 
+/** starknet.js decodes a Cairo enum return as a CairoCustomEnum object, e.g.
+ * `{ variant: { Unclaimed: undefined, Active: {}, Consumed: undefined } }`.
+ * Treating that object as a number produces NaN and silently falls back to
+ * UNCLAIMED, which makes a real ACTIVE claim look as if it never landed. Keep
+ * the numeric fallback for providers/ABIs that still return enum indices. */
+export function decodeRightState(raw: any): RightState {
+  const variant = raw != null && typeof raw === "object" ? (raw.variant ?? raw) : null;
+  if (variant != null && typeof variant === "object") {
+    if (variant.Active !== undefined) return RightState.Active;
+    if (variant.Consumed !== undefined) return RightState.Consumed;
+    if (variant.Unclaimed !== undefined) return RightState.Unclaimed;
+  }
+  if (typeof variant === "string") {
+    if (variant === "Active") return RightState.Active;
+    if (variant === "Consumed") return RightState.Consumed;
+    if (variant === "Unclaimed") return RightState.Unclaimed;
+  }
+  const n = typeof raw === "bigint" ? Number(raw) : Number(raw?.toString?.() ?? raw);
+  return [RightState.Unclaimed, RightState.Active, RightState.Consumed][n] ?? RightState.Unclaimed;
+}
+
 // Mirrors the Cairo enum's declaration order in claim_anonymizer.cairo -
 // Starknet encodes an enum as its variant index, so this order is load-bearing.
 const ClaimOperation = { Claim: 0, Settle: 1, Finance: 2, SettleAndRepay: 3 } as const;
@@ -56,18 +77,123 @@ interface PrivacyInvokeArgs {
 const ZERO: Felt = "0x0";
 const toFelt = (n: number | bigint): Felt => "0x" + n.toString(16);
 
+// starknet.js's waitForTransaction only bounds itself by a retry *count*
+// (default 200 at 5s each - up to ~16 minutes), which assumes each poll
+// eventually settles. A single hung fetch to a public RPC node - no
+// response, no error, no built-in HTTP timeout - never lets that counter
+// move, so a `{ retries: N }` option alone cannot guarantee the call
+// returns. Racing against a real timer is the only thing that does; the
+// underlying transaction is unaffected either way, this only bounds how
+// long this call waits to find out.
+export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
+const READY_SUBMISSION_TIMEOUT_MS = 180_000;
+const READY_PREPARATION_TIMEOUT_MS = 30_000;
+const INVALID_REQUEST_PAYLOAD_CODE = 114;
+const INSUFFICIENT_PRIVATE_BALANCE_CODE = 119;
+
+/** By default Sole sends only the protocol-valid `invoke` action. Older Ready
+ * builds have been observed rejecting that shape with code 114 before any
+ * signing or submission. A caller may explicitly opt into the historical
+ * deposit+invoke compatibility shape after surfacing its cost to the user;
+ * the SDK never selects that value-moving workaround on its own. */
+export interface PrivacyInvokeOptions {
+  useCompanionDeposit?: boolean;
+}
+
+/** Ready owns proof generation and submission. There is no Wallet API abort
+ * signal, so timing out only releases the dapp UI: the original request may
+ * still resolve with a hash later and must remain observable/reconcilable. */
+export class ReadySubmissionTimeoutError extends Error {
+  readonly outcomeUnknown = true;
+  readonly lateSubmission: Promise<{ transaction_hash: string }>;
+
+  constructor(lateSubmission: Promise<{ transaction_hash: string }>) {
+    super("Ready did not return a transaction hash after ~3 minutes");
+    this.name = "ReadySubmissionTimeoutError";
+    this.lateSubmission = lateSubmission;
+  }
+}
+
+/** A no-gas Wallet API preparation rejected the standalone action. Code 114
+ * is the Wallet API's generic INVALID_REQUEST_PAYLOAD code: it does not prove
+ * why Ready rejected the payload or that a deposit will fix it. This is not a
+ * transaction outcome: no call was signed, relayed, or sent. An application
+ * may expose a separately confirmed legacy action shape as an experiment, but
+ * must never silently spend or retry because of this error. */
+export class ReadyStandaloneInvokeRejectedError extends Error {
+  readonly noSubmission = true;
+  readonly mayUseCompanionDeposit = true;
+  readonly code: number;
+  readonly data: unknown;
+
+  constructor(cause: any) {
+    super(
+      "Ready rejected the standalone private invoke during a no-gas preparation. " +
+      "No transaction was sent. INVALID_REQUEST_PAYLOAD is generic and does not establish that a companion deposit will help.",
+    );
+    this.name = "ReadyStandaloneInvokeRejectedError";
+    this.code = cause?.code ?? INVALID_REQUEST_PAYLOAD_CODE;
+    this.data = cause?.data;
+  }
+}
+
+/** No-gas preparation found that the wallet cannot cover its automatic
+ * private-action/relayer fee from shielded STRK. Shield funds deliberately in
+ * Ready, then retry as a fresh action; do not make the dapp top up silently. */
+export class ReadyPrivateBalanceRequiredError extends Error {
+  readonly noSubmission = true;
+  readonly requiresPrivateBalance = true;
+  readonly code: number;
+  readonly data: unknown;
+
+  constructor(cause: any) {
+    super(
+      "Ready reports insufficient shielded STRK for the private-action fee. " +
+      "No transaction was sent. Shield funds deliberately in Ready, then retry.",
+    );
+    this.name = "ReadyPrivateBalanceRequiredError";
+    this.code = cause?.code ?? INSUFFICIENT_PRIVATE_BALANCE_CODE;
+    this.data = cause?.data;
+  }
+}
+
+export async function waitForReadySubmission<T extends { transaction_hash: string }>(
+  submission: Promise<T>, timeoutMs = READY_SUBMISSION_TIMEOUT_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Keep a rejection handler attached after the UI has timed out. The wallet
+  // request cannot be cancelled, but a later rejection must not become an
+  // unhandled promise rejection in the page.
+  void submission.catch(() => undefined);
+  try {
+    return await Promise.race([
+      submission,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new ReadySubmissionTimeoutError(submission)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 // STRK's mainnet ERC-20 address (verified live: symbol() -> "STRK",
-// decimals() -> 18). Every documented privacy_invoke example - Swap, Vesu,
-// Escrow, and even the lower-level starknet-privacy-sdk builder - pairs the
-// invoke action with a real value-moving action (withdraw/deposit/transfer)
-// in the same STRK20 transaction; none show invoke used completely alone.
-// A bare invoke-only actions array is rejected by the wallet as
-// INVALID_REQUEST_PAYLOAD before it ever reaches proving. This deposits
-// 2x the pool's current flat fee (see getFeeAmount/privacyActionDeposit -
-// never hardcoded, it's admin-settable and has changed once already) from
-// the caller's own public balance into their own private balance - never
-// sent elsewhere, and rolled back atomically with the rest of the
-// transaction if the invoke reverts.
+// decimals() -> 18). It is used solely by the explicit legacy companion
+// deposit option. A standalone `invoke` is a valid Wallet API action; the
+// transfer in most private-DeFi examples opens an output note and is not a
+// general requirement for invoke validity.
 const STRK_MAINNET: Felt = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 
 // Wallet API error code for "account has no viewing key registered with the
@@ -101,6 +227,42 @@ export interface ClaimantView extends PublicView { claimCommitment: Felt; claime
 export interface CounterpartyView { slotKey: Felt; satisfied: boolean }
 export interface AuditorView extends ClaimantView { nullifier?: Felt; consumedAt?: number }
 
+/** The result of a read-only reconciliation after a wallet did not give the
+ * dapp a conclusive result. The commitment is public; its preimage remains
+ * only with the claimant. */
+export interface ClaimReconciliation extends ClaimantView { matchesExpectedClaim: boolean }
+
+function sameFelt(a: unknown, b: unknown): boolean {
+  try { return BigInt(a as string) === BigInt(b as string); } catch { return false; }
+}
+
+/** Verify the exact transition this SDK asked the registry to perform. An
+ * address-only event match is insufficient: a registry can emit more than one
+ * event type, and a stale event must never make a claim look successful. */
+export function hasExactRightClaim(
+  receipt: any, registry: string, slotKey: string, claimCommitment: string,
+): boolean {
+  const selector = hash.getSelectorFromName("RightClaimed");
+  return (receipt?.events ?? []).some((event: any) =>
+    sameFelt(event.from_address, registry)
+    && sameFelt(event.keys?.[0], selector)
+    && sameFelt(event.keys?.[1], slotKey)
+    && sameFelt(event.data?.[0], claimCommitment),
+  );
+}
+
+/** Same strict event check for the paid, per-right registration step. An
+ * UNCLAIMED state alone is not proof a right was registered: it is also the
+ * storage default for an unknown slot. */
+export function hasExactRightRegistration(receipt: any, registry: string, slotKey: string): boolean {
+  const selector = hash.getSelectorFromName("RightRegistered");
+  return (receipt?.events ?? []).some((event: any) =>
+    sameFelt(event.from_address, registry)
+    && sameFelt(event.keys?.[0], selector)
+    && sameFelt(event.keys?.[1], slotKey),
+  );
+}
+
 export class SoleClient {
   // Explicit fields, not constructor parameter properties: the shorthand
   // generates real assignment code, which - like `enum` - strip-only mode
@@ -111,8 +273,8 @@ export class SoleClient {
   // Cached result of the pool's get_fee_amount() - fetched live, never
   // hardcoded (SKILL.md warns the flat fee has already changed since it was
   // first documented: 4 STRK when written, 6 STRK as verified on mainnet
-  // here). Cached per client instance since it only changes via an admin
-  // set_fee_amount call, not per transaction.
+  // here). It is used only for the user-selected Ready compatibility deposit,
+  // not for the default standalone invoke path.
   private feeAmount: bigint | null = null;
 
   constructor(provider: RpcProvider, addrs: SoleAddresses, registryAbi: any) {
@@ -139,11 +301,10 @@ export class SoleClient {
     return fee;
   }
 
-  /** How much a privacy_invoke's companion deposit should move: comfortably
-   *  more than the current fee (2x), so the action clears the fee with
-   *  margin even if it changes between this read and execution, rather than
-   *  landing exactly on it and depending on the wallet crediting the deposit
-   *  before checking fee affordability. */
+  /** The explicit legacy Ready compatibility deposit. It is deliberately
+   *  twice the current fee because Ready appends its own fee withdrawal; the
+   *  resulting gross shield is not an extra gas charge. This is not a
+   *  STRK20 protocol requirement and must never be selected automatically. */
   private async privacyActionDeposit(): Promise<Felt> {
     const fee = await this.getFeeAmount();
     return toFelt(fee * 2n);
@@ -159,6 +320,35 @@ export class SoleClient {
     const slotKey = this.slotKeyFor(reference);
     const raw = await this.registry().state_of(slotKey);
     return { slotKey, state: this.decodeState(raw) };
+  }
+
+  /** Read the registry's public claim record. This is deliberately separate
+   * from the local claimant secret: the commitment lets a caller determine
+   * whether an ambiguous wallet request was *their* claim without exposing
+   * that secret. */
+  async claimRecord(reference: string): Promise<ClaimantView> {
+    const slotKey = this.slotKeyFor(reference);
+    const registry = this.registry();
+    const [rawState, rawCommitment] = await Promise.all([
+      registry.state_of(slotKey),
+      registry.commitment_of(slotKey),
+    ]);
+    return {
+      slotKey,
+      state: this.decodeState(rawState),
+      claimCommitment: normalizeFelt(rawCommitment.toString()),
+    };
+  }
+
+  /** Read-only recovery for a sponsored-wallet response that timed out or
+   * otherwise did not return a transaction hash. No transaction is sent. */
+  async reconcileClaim(reference: string, expectedCommitment: Felt): Promise<ClaimReconciliation> {
+    const record = await this.claimRecord(reference);
+    return {
+      ...record,
+      matchesExpectedClaim: record.state === RightState.Active
+        && sameFelt(record.claimCommitment, expectedCommitment),
+    };
   }
 
   /** Availability check without revealing who holds it. The core question Sole
@@ -181,68 +371,61 @@ export class SoleClient {
    *  and fundingNote stay client-side; only the commitment reaches chain. */
   async claim(
     account: SoleAccount, reference: string, claimantSecret: Felt, fundingNote: Felt,
+    options: PrivacyInvokeOptions = {},
   ): Promise<{ tx: string; claimCommitment: Felt }> {
     const slotKey = this.slotKeyFor(reference);
     const claimCommitment = deriveClaimCommitment(slotKey, claimantSecret, fundingNote);
     const tx = await this.privacyInvoke(
       account, ClaimOperation.Claim, { slotKey, claimCommitment }, this.addrs.registry,
+      (receipt) => hasExactRightClaim(receipt, this.addrs.registry, slotKey, claimCommitment),
+      options,
     );
+    const record = await this.reconcileClaim(reference, claimCommitment);
+    if (!record.matchesExpectedClaim) {
+      throw Object.assign(
+        new Error(
+          `claim transaction confirmed but the registry does not contain the expected ACTIVE claim ` +
+          `(tx: ${tx}). Do not resubmit until its on-chain state is reconciled.`,
+        ),
+        { txHash: tx, state: record.state, actualCommitment: record.claimCommitment },
+      );
+    }
     return { tx, claimCommitment };
   }
 
   /** Consume the right. Reveals the nullifier; only the holder can produce it. */
-  async settle(account: SoleAccount, reference: string, claimantSecret: Felt): Promise<string> {
+  async settle(
+    account: SoleAccount, reference: string, claimantSecret: Felt, options: PrivacyInvokeOptions = {},
+  ): Promise<string> {
     const slotKey = this.slotKeyFor(reference);
     const nullifier = deriveNullifier(claimantSecret, slotKey);
-    return this.privacyInvoke(account, ClaimOperation.Settle, { slotKey, nullifier }, this.addrs.registry);
+    return this.privacyInvoke(account, ClaimOperation.Settle, { slotKey, nullifier }, this.addrs.registry, undefined, options);
   }
 
   /** Authorize + execute one financing action against the venue. Only runs
    *  because A holds an ACTIVE right; the adapter re-checks Sole's state. */
   async finance(
     account: SoleAccount, reference: string, claimCommitment: Felt, amountCommitment: Felt,
+    options: PrivacyInvokeOptions = {},
   ): Promise<string> {
     const slotKey = this.slotKeyFor(reference);
     const nonce = deriveExecNonce(slotKey, claimCommitment);
     return this.privacyInvoke(account, ClaimOperation.Finance,
       { adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce, amountCommitment },
-      this.addrs.adapter);
-  }
-
-  /** finance(), submitted self-paid instead of through the wallet's
-   *  paymaster-sponsored strk20InvokeTransaction route. Every live finance()
-   *  attempt has failed at wallet-side simulation with a generic error and
-   *  no Cairo revert reason - consistent with the wallet's paymaster
-   *  declining to sponsor a call into a contract (the adapter) it's never
-   *  seen before, rather than the call being invalid. strk20PrepareInvoke
-   *  builds the same actions and proof without the wallet adding its own
-   *  fee-sponsorship action, and executeWithProof() submits it as an
-   *  ordinary self-paid invoke - if the paymaster is really the blocker,
-   *  this reaches the contract either way and returns a real outcome
-   *  (success or an actual revert reason) instead of a wallet-side refusal.
-   *  Costs real gas paid by the connected account - not a dry run. */
-  async financeSelfPaid(
-    account: SoleAccount, reference: string, claimCommitment: Felt, amountCommitment: Felt,
-  ): Promise<string> {
-    const slotKey = this.slotKeyFor(reference);
-    const nonce = deriveExecNonce(slotKey, claimCommitment);
-    const { invokeAction, depositAction } = await this.buildActions(ClaimOperation.Finance,
-      { adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce, amountCommitment });
-    const { call, proof } = await account.strk20PrepareInvoke([depositAction, invokeAction], false);
-    const { transaction_hash } = await account.executeWithProof(call, proof);
-    return transaction_hash;
+      this.addrs.adapter, undefined, options);
   }
 
   /** Settle: repay the venue position and consume the right, atomically. */
   async settleAndRepay(
     account: SoleAccount, reference: string, claimantSecret: Felt, claimCommitment: Felt,
+    options: PrivacyInvokeOptions = {},
   ): Promise<string> {
     const slotKey = this.slotKeyFor(reference);
     const nullifier = deriveNullifier(claimantSecret, slotKey);
     const nonce = deriveExecNonce(slotKey, claimCommitment);
     return this.privacyInvoke(account, ClaimOperation.SettleAndRepay,
       { slotKey, nullifier, adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce },
-      this.addrs.adapter);
+      this.addrs.adapter, undefined, options);
   }
 
   // ----- scoped disclosure projections -----
@@ -257,19 +440,24 @@ export class SoleClient {
    * Escrow). Builds the full flat positional calldata the Cairo side expects
    * (operation, slot_key, claim_commitment, nullifier, adapter, auth.slot_key,
    * auth.nonce, amount_commitment), zero-filling whatever this operation
-   * doesn't use. Sole's privacy_invoke always returns an empty
-   * Span<OpenNoteDeposit> (it moves no value through the pool), but the
-   * transaction still needs a real value-moving action alongside the invoke -
-   * every documented anonymizer helper (Swap, Vesu, Escrow) pairs invoke with
-   * a withdraw/deposit/transfer, and a bare invoke-only actions array is
-   * rejected by the wallet as INVALID_REQUEST_PAYLOAD before it ever reaches
-   * proving. A `deposit` of 2x the pool's current fee (read live via
-   * getFeeAmount, never hardcoded) into the caller's own private balance
-   * satisfies that without moving value anywhere but back to them - and
-   * rolls back atomically if the invoke reverts. The wallet proves
-   * a shielded funding note in ZK before dispatching, so the anonymizer - not
-   * the raw wallet - is the caller the registry records (docs/INTEGRATING.md,
-   * strk20-wallet-api/private-defi).
+   * doesn't use. Sole's privacy_invoke returns an empty Span<OpenNoteDeposit>
+   * because it moves no value through the pool. A bare `invoke` is a valid
+   * STRK20 Wallet API action; the output-opening transfer in swap examples is
+   * needed by those helpers, not by Sole. The wallet adds its own private fee
+   * withdrawal, so the user must have a sufficient shielded STRK balance.
+   *
+   * `useCompanionDeposit` retains the legacy [deposit, invoke] shape only as
+   * an explicit caller choice. It uses twice the live pool fee because Ready
+   * adds its own fee withdrawal. It is neither a protocol requirement nor an
+   * automatic recovery for INVALID_REQUEST_PAYLOAD, which is a generic wallet
+   * error and may have unrelated causes.
+   *
+   * Before each action, Sole asks Ready for a no-gas, non-submittable
+   * preparation. This validates the exact action shape and lets the dapp stop
+   * safely on a code 114/119 response before opening a paid wallet request.
+   * The wallet proves a shielded funding note in ZK before dispatching, so
+   * the anonymizer - not the raw wallet - is the caller the registry records
+   * (docs/INTEGRATING.md, strk20-wallet-api/private-defi).
    *
    * strk20InvokeTransaction resolving is NOT proof the invoke ran: observed
    * live on mainnet, a combined deposit+invoke can confirm with no revert
@@ -285,25 +473,24 @@ export class SoleClient {
    * invoke both surface the same way if you only check for the expected
    * event: no matching event, empty receipt.events either way. Conflating
    * them was a real bug here - a genuine revert (e.g. AUTH_NONCE_MISMATCH)
-   * was being misread as "dropped" and retried with the invoke sent alone,
-   * which fails wallet-side payload validation on its own regardless (a bare
-   * invoke has no viable single-shot recovery - confirmed separately). This
-   * checks execution_status first: a real revert throws immediately with
-   * the actual reason.
+   * was being misread as "dropped" and retried automatically. This checks
+   * execution_status first: a real revert throws immediately with the actual
+   * reason, and a caller can decide what to do after a free reconciliation.
    *
    * No automatic retry on a successful-but-missing-event result either
    * anymore: firing a second strk20InvokeTransaction immediately back to
    * back with the first was itself producing wallet/paymaster-level
    * failures (PaymasterV2Error 156, no transaction ever submitted) with
    * balance ruled out as the cause - the rapid back-to-back pair is the
-   * likely trigger, not anything in the calldata. claim() has only ever
-   * been attempted once per call and has never shown this failure mode.
-   * So this now throws a clear, specific error for the caller to retry as
-   * a fresh, separate action instead of retrying inline.
+   * likely trigger, not anything in the calldata. The caller must reconcile
+   * the registry state before deciding whether another action is safe; this
+   * SDK never retries a privacy invocation inline.
    */
-  /** Builds the same [deposit, invoke] action pair privacyInvoke() submits,
-   *  without submitting it - shared by privacyInvoke() and dryRun(). */
-  private async buildActions(operation: ClaimOperation, args: PrivacyInvokeArgs) {
+  /** Builds the action list privacyInvoke() submits. The value-moving
+   *  companion deposit is constructed only after an explicit opt-in. */
+  private async buildActions(
+    operation: ClaimOperation, args: PrivacyInvokeArgs, useCompanionDeposit = false,
+  ): Promise<Parameters<SoleAccount["strk20InvokeTransaction"]>[0]> {
     // Wallet-api FELT is a hex string, not a bigint - every field here must
     // already be (or become) "0x...", and normalized (see normalizeFelt).
     const calldata: Felt[] = [
@@ -316,14 +503,57 @@ export class SoleClient {
       normalizeFelt(args.authNonce ?? ZERO),
       normalizeFelt(args.amountCommitment ?? ZERO),
     ];
-    const depositAmount = await this.privacyActionDeposit();
     const invokeAction = {
       type: "invoke" as const, contract: normalizeFelt(this.addrs.anonymizer), calldata,
     };
+    if (!useCompanionDeposit) return [invokeAction];
+
+    const depositAmount = await this.privacyActionDeposit();
     const depositAction = {
       type: "deposit" as const, token: normalizeFelt(STRK_MAINNET), amount: depositAmount,
     };
-    return { invokeAction, depositAction };
+    return [depositAction, invokeAction];
+  }
+
+  /** Simulate an action set without proof/submission. The returned result is
+   * non-submittable; therefore any error from this method is definitively a
+   * no-transaction outcome. Do not give real submission errors this marker. */
+  private async prepareInvoke(
+    account: SoleAccount,
+    actions: Parameters<SoleAccount["strk20InvokeTransaction"]>[0],
+    standalone: boolean,
+  ): Promise<any> {
+    try {
+      return await withTimeout(
+        account.strk20PrepareInvoke(actions, true),
+        READY_PREPARATION_TIMEOUT_MS,
+        "Ready did not finish the no-gas private-action preparation after ~30 seconds",
+      );
+    } catch (e: any) {
+      const code = Number(e?.code);
+      if (standalone && code === INVALID_REQUEST_PAYLOAD_CODE) {
+        throw new ReadyStandaloneInvokeRejectedError(e);
+      }
+      if (code === INSUFFICIENT_PRIVATE_BALANCE_CODE) {
+        throw new ReadyPrivateBalanceRequiredError(e);
+      }
+      if (code === NOT_REGISTERED_CODE) {
+        throw Object.assign(
+          new Error(
+            "STRK20 is not enabled for this wallet. In Ready, complete 'Enable private tokens' " +
+            "on the main wallet view, then return here. No transaction was sent.",
+          ),
+          { code: e.code, data: e.data, cause: e, noSubmission: true },
+        );
+      }
+      const shape = standalone ? "standalone invoke" : "legacy deposit-plus-invoke action";
+      throw Object.assign(
+        new Error(
+          `Ready could not prepare the ${shape}. No transaction was sent: ${e?.message ?? String(e)}`,
+        ),
+        { code: e?.code, data: e?.data, cause: e, noSubmission: true },
+      );
+    }
   }
 
   /** Zero-cost diagnostic: runs the wallet's own pre-flight simulation
@@ -333,50 +563,100 @@ export class SoleClient {
    *  than the generic PaymasterV2Error code a live attempt shows. */
   async dryRunFinance(
     account: SoleAccount, reference: string, claimCommitment: Felt, amountCommitment: Felt,
+    options: PrivacyInvokeOptions = {},
   ): Promise<any> {
     const slotKey = this.slotKeyFor(reference);
     const nonce = deriveExecNonce(slotKey, claimCommitment);
-    const { invokeAction, depositAction } = await this.buildActions(ClaimOperation.Finance,
-      { adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce, amountCommitment });
-    return account.strk20PrepareInvoke([depositAction, invokeAction], true);
+    const actions = await this.buildActions(
+      ClaimOperation.Finance,
+      { adapter: this.addrs.adapter, authSlotKey: slotKey, authNonce: nonce, amountCommitment },
+      options.useCompanionDeposit === true,
+    );
+    return this.prepareInvoke(account, actions, options.useCompanionDeposit !== true);
+  }
+
+  /** Same zero-cost pre-flight simulation as dryRunFinance, for claim().
+   *  runs the same exact action shape with simulate=true instead of a real
+   *  submission, so callers receive wallet diagnostics without sending a
+   *  transaction. */
+  async dryRunClaim(
+    account: SoleAccount, reference: string, claimantSecret: Felt, fundingNote: Felt,
+    options: PrivacyInvokeOptions = {},
+  ): Promise<any> {
+    const slotKey = this.slotKeyFor(reference);
+    const claimCommitment = deriveClaimCommitment(slotKey, claimantSecret, fundingNote);
+    const actions = await this.buildActions(
+      ClaimOperation.Claim, { slotKey, claimCommitment }, options.useCompanionDeposit === true,
+    );
+    return this.prepareInvoke(account, actions, options.useCompanionDeposit !== true);
   }
 
   private async privacyInvoke(
     account: SoleAccount, operation: ClaimOperation, args: PrivacyInvokeArgs, expectAddress: Felt,
+    verifyReceipt?: (receipt: any) => boolean,
+    options: PrivacyInvokeOptions = {},
   ): Promise<string> {
-    const { invokeAction, depositAction } = await this.buildActions(operation, args);
+    const actions = await this.buildActions(operation, args, options.useCompanionDeposit === true);
+    await this.prepareInvoke(account, actions, options.useCompanionDeposit !== true);
 
     const attempt = async (
       actions: Parameters<SoleAccount["strk20InvokeTransaction"]>[0],
     ): Promise<{ hash: string; reverted: boolean; revertReason?: string; ran: boolean }> => {
       let hash: string;
       try {
-        ({ transaction_hash: hash } = await account.strk20InvokeTransaction(actions));
+        // The Wallet API may be proving and relaying for a long time, but a
+        // bridge promise that never settles must not pin the dapp in
+        // "Claiming…" forever. Timing out here does not cancel the request;
+        // ReadySubmissionTimeoutError keeps its original promise available
+        // for callers to reconcile without ever retrying automatically.
+        const submission = account.strk20InvokeTransaction(actions);
+        ({ transaction_hash: hash } = await waitForReadySubmission(submission));
       } catch (e: any) {
         if (e?.code !== NOT_REGISTERED_CODE) throw e;
-        // The Wallet API spec calls pool registration "transparent", but
-        // Ready returns NOT_REGISTERED on a combined deposit+invoke for an
-        // account's first-ever STRK20 use rather than registering inline. A
-        // standalone deposit - the same single-action shape every
-        // STRK20-by-example first-use flow shows - registers the account;
-        // once that's confirmed on-chain, retry the original action.
-        console.info("[sole-sdk] account not yet registered with the STRK20 pool - registering via a standalone deposit, then retrying");
-        const { transaction_hash: registerTx } = await account.strk20InvokeTransaction([depositAction]);
-        await this.provider.waitForTransaction(registerTx);
-        ({ transaction_hash: hash } = await account.strk20InvokeTransaction(actions));
+        // Never hide an additional paid operation behind a claim. Ready's
+        // account setup must be completed explicitly by the wallet owner;
+        // auto-depositing and immediately retrying can queue requests and
+        // leave the dapp unable to correlate the eventual transaction.
+        throw Object.assign(
+          new Error(
+            "STRK20 is not enabled for this wallet. In Ready, complete 'Enable private tokens' " +
+            "on the main wallet view, then return here. Sole did not send an extra setup transaction.",
+          ),
+          { code: e.code, data: e.data, cause: e },
+        );
       }
-      const receipt: any = await this.provider.waitForTransaction(hash);
+      // retries alone doesn't bound this against a single hung RPC fetch
+      // (see withTimeout) - a real timer is what actually guarantees this
+      // returns within ~90s.
+      let receipt: any;
+      try {
+        receipt = await withTimeout(
+          this.provider.waitForTransaction(hash, { retries: 24 }),
+          90_000,
+          `still not confirmed after ~90s (tx: ${hash})`,
+        );
+      } catch (e: any) {
+        throw Object.assign(
+          new Error(
+            `${e?.message ?? "still not confirmed"} (tx: ${hash}). It may still land - check its ` +
+            "status before resubmitting, rather than retrying blind.",
+          ),
+          { txHash: hash, cause: e },
+        );
+      }
       if (receipt.execution_status === "REVERTED") {
         return { hash, reverted: true, revertReason: receipt.revert_reason, ran: false };
       }
       const expected = BigInt(expectAddress);
-      const ran = (receipt.events ?? []).some(
-        (e: any) => e.from_address != null && BigInt(e.from_address) === expected,
-      );
+      const ran = verifyReceipt
+        ? verifyReceipt(receipt)
+        : (receipt.events ?? []).some(
+          (e: any) => e.from_address != null && BigInt(e.from_address) === expected,
+        );
       return { hash, reverted: false, ran };
     };
 
-    const result = await attempt([depositAction, invokeAction]);
+    const result = await attempt(actions);
     if (result.reverted) {
       throw Object.assign(
         new Error(`privacy_invoke reverted: ${result.revertReason ?? "(no reason reported)"}`),
@@ -411,7 +691,6 @@ export class SoleClient {
   }
 
   private decodeState(raw: any): RightState {
-    const n = typeof raw === "bigint" ? Number(raw) : Number(raw?.toString?.() ?? raw);
-    return [RightState.Unclaimed, RightState.Active, RightState.Consumed][n] ?? RightState.Unclaimed;
+    return decodeRightState(raw);
   }
 }
