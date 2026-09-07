@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, Lock, Eye, EyeOff, ShieldCheck, Ban, CheckCircle2, ChevronRight, Layers, Sparkles } from "lucide-react";
 import { motion, Variants } from "framer-motion";
+import { GrainOverlay } from "../components/GrainOverlay";
 
 const wrap: React.CSSProperties = { maxWidth: 1040, margin: "0 auto", padding: "0 26px" };
 const thc: React.CSSProperties = { textAlign: "left", padding: "14px 18px", background: "var(--parch2)", fontWeight: 600, borderBottom: "1px solid var(--paper-line)" };
@@ -43,7 +44,8 @@ const cardHoverVariants: Variants = {
 
 export default function Home() {
   return (
-    <main>
+    <main style={{ position: "relative" }}>
+      <GrainOverlay />
       {/* HERO SECTION - Centered with Rich Framer Motion Animations */}
       <section style={{ ...wrap, padding: "88px 26px 72px", textAlign: "center" }}>
         <motion.div
