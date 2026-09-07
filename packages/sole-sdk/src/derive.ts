@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Sole SDK - derivation
-// The single source of truth for how Sole's private values are derived.
+// The single source of truth for how Sole's client-held inputs are derived.
 // These MUST match contracts/src/right_root.cairo::Tags exactly, byte for
 // byte. Cross-language parity is asserted against fixed vectors in
 // derive.test.ts: if either implementation drifts, exactly one suite goes red.
@@ -10,15 +10,16 @@
 //                  -> shared, deterministic, ANY party can derive it.
 //                     This is what makes a second claimant collide.
 //   claim_record = Poseidon(TAG_CLAIM, slot_key, claimant_secret, funding_note)
-//                  -> private ownership; only the holder can open it.
+//                  -> opaque public commitment; its preimages are not emitted
+//                     by the registry event.
 //   nullifier    = Poseidon(TAG_NULL, claimant_secret, slot_key)
 //                  -> consumes the claim once; requires claimant_secret.
 //
 // PRIVACY BOUNDARY (see docs/PRIVACY_BOUNDARY.md): the salt/blinding lives in
-// the CLAIM, never in the slot_key. So anyone holding canonical_asset_id can
-// read a right's public STATE, but nobody can derive the claimant, amount, or
-// counterparty. "Enforcement state is public; the economic relationship is
-// private."
+// the claim commitment, never in the slot_key. Anyone holding
+// canonical_asset_id can read the right's public state. This derivation does
+// not make a wallet unlinkable: pool deposit events, timing, and the atomic
+// receipt can still provide public correlation evidence.
 
 import { hash, shortString } from "starknet";
 
@@ -36,7 +37,10 @@ export function deriveSlotKey(canonicalAssetId: Felt): Felt {
   return hash.computePoseidonHashOnElements([TAG_SLOT, canonicalAssetId]);
 }
 
-/** Private ownership record. Requires the holder's secret; never on-chain in clear. */
+/**
+ * Opaque commitment written on-chain. Its client-held preimages are not stored
+ * in clear by the registry, but the commitment is not a wallet-privacy claim.
+ */
 export function deriveClaimCommitment(
   slotKey: Felt,
   claimantSecret: Felt,
@@ -45,15 +49,17 @@ export function deriveClaimCommitment(
   return hash.computePoseidonHashOnElements([TAG_CLAIM, slotKey, claimantSecret, fundingNote]);
 }
 
-/** Consumption marker. Requires the holder's secret, so only they can settle. */
+/** Public single-use marker derived from client-held inputs for settlement. */
 export function deriveNullifier(claimantSecret: Felt, slotKey: Felt): Felt {
   return hash.computePoseidonHashOnElements([TAG_NULL, claimantSecret, slotKey]);
 }
 
-/** Single-use execution-auth nonce that binds a venue action to this claim.
+/** Single-use execution-auth nonce that binds an adapter action to this claim.
  *  nonce = Poseidon(TAG_EXEC, slot_key, claim_commitment). The adapter also
  *  independently checks Sole says the right is ACTIVE, so a leaked nonce alone
- *  authorizes nothing. */
+ *  authorizes nothing.
+ *  (shared-registry adapter, non-ACTIVE) --finance--> REVERT AUTH_RIGHT_NOT_ACTIVE
+ */
 export function deriveExecNonce(slotKey: Felt, claimCommitment: Felt): Felt {
   return hash.computePoseidonHashOnElements([TAG_EXEC, slotKey, claimCommitment]);
 }
