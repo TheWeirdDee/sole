@@ -16,17 +16,24 @@ function renderResult(r: VerifyResult): string {
   return lines.join("\n");
 }
 
+const mostRecentHash = (): string | undefined => {
+  const txs = (claims as any).transactions;
+  return txs?.[txs.length - 1]?.hash;
+};
+
 export default function Verify() {
   const [txin, setTxin] = useState("");
   const [log, setLog] = useState("Waiting. Try “Verify all”.");
   const [busy, setBusy] = useState(false);
 
-  const verifyOne = async () => {
-    if (!txin.trim()) { setLog("enter a transaction hash"); return; }
+  const verifyOne = async (overrideHash?: string) => {
+    const target = (overrideHash ?? txin).trim();
+    if (!target) { setLog("enter a transaction hash"); return; }
+    if (overrideHash) setTxin(overrideHash);
     setBusy(true);
-    setLog(`verifying ${txin} ...`);
+    setLog(`verifying ${target} ...`);
     try {
-      const r = await verifyTx(txin.trim());
+      const r = await verifyTx(target);
       setLog(renderResult(r));
     } catch (e: any) {
       setLog(`error: ${e?.message ?? e}`);
@@ -83,9 +90,21 @@ export default function Verify() {
             disabled={busy}
             style={{ flex: 1, minWidth: 240, padding: "12px 14px", border: "1px solid var(--rule)",
               background: "#efe8d6", fontFamily: "ui-monospace,Menlo,monospace", fontSize: 13, color: "var(--ink)" }} />
-          <button onClick={verifyOne} disabled={busy} style={{ background: "var(--ink)", color: "var(--parch)", padding: "12px 20px", border: "none", borderRadius: 2, cursor: busy ? "not-allowed" : "pointer", fontFamily: "inherit", fontSize: 15 }}>Verify hash</button>
+          <button onClick={() => verifyOne()} disabled={busy} style={{ background: "var(--ink)", color: "var(--parch)", padding: "12px 20px", border: "none", borderRadius: 2, cursor: busy ? "not-allowed" : "pointer", fontFamily: "inherit", fontSize: 15 }}>Verify hash</button>
           <button onClick={verifyAll} disabled={busy} style={{ background: "transparent", color: "var(--ink)", padding: "12px 20px", border: "1px solid var(--ink)", borderRadius: 2, cursor: busy ? "not-allowed" : "pointer", fontFamily: "inherit", fontSize: 15 }}>Verify all</button>
         </div>
+        {mostRecentHash() && (
+          <button
+            onClick={() => verifyOne(mostRecentHash())}
+            disabled={busy}
+            style={{
+              display: "block", marginTop: 10, border: "none", background: "none", padding: 0,
+              color: "var(--claret)", cursor: busy ? "not-allowed" : "pointer", fontFamily: "inherit", fontSize: 13,
+            }}
+          >
+            No hash on hand? Try the most recent recorded transaction ({mostRecentHash()!.slice(0, 10)}…)
+          </button>
+        )}
         <div style={logBox}>{log}</div>
       </div>
       <p style={{ fontSize: 13, color: "var(--faded)", marginTop: 12 }}>
