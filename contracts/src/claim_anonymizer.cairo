@@ -1,32 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Sole - ClaimAnonymizer
-// The mandatory STRK20 privacy boundary (see DECISIONS.md D-005). Without it,
-// the wallet that calls RightsRegistry.claim() becomes msg.sender on the
-// public transition, linking a real identity to the exclusive right and
-// defeating the entire thesis.
+// The mandatory STRK20 invocation boundary. Without it, the wallet that calls
+// RightsRegistry.claim() becomes msg.sender on the registry transition. The
+// registry therefore sees this helper as caller. That narrow caller separation
+// does not imply transaction-level wallet unlinkability: a pool deposit can be
+// publicly correlated with the same receipt's registry transition.
 //
 // This is a standard STRK20 anonymizer helper: the pool calls it through the
 // same privacy_invoke seam as every other helper (Swap, Vesu, Escrow) - one
 // entry point, named privacy_invoke, dispatched by an operation argument,
-// called via the pool's INVOKE_SELECTOR once it has proved a shielded
-// funding note was spent. The registry only ever sees the anonymizer as
-// caller; the claiming wallet never appears on the RightsRegistry
-// transition.
+// called via the pool's INVOKE_SELECTOR once it has proved the wallet's
+// private action. The registry only ever sees the anonymizer as caller; the
+// wallet never appears as the RightsRegistry caller.
 //
 //   claimant wallet
-//        | shielded STRK20 funding note (private_transfer)
+//        | wallet-authorized STRK20 private action
 //        v
 //   STRK20 pool  --privacy_invoke(operation, ...)-->  ClaimAnonymizer
 //                                          |
 //                                          v
 //                          RightsRegistry / ExecutionAdapter
 //
-// Sole's operations are state transitions, not value handed back to the
-// pool, so privacy_invoke returns an empty Span<OpenNoteDeposit> in every
-// branch - the same shape the Escrow reference helper returns for its
-// Deposit case ("tokens stay parked, nothing to credit yet"). See
-// docs/INTEGRATING.md for the exact wiring and the SDK path.
+// Sole's helper returns an empty Span<OpenNoteDeposit> in every branch. Its
+// operations are state transitions and adapter bookkeeping only; this helper
+// does not transfer assets or credit an external position.
 
 use starknet::ContractAddress;
 use sole_contracts::execution_adapter::ExecAuth;
@@ -113,9 +111,8 @@ pub mod ClaimAnonymizer {
 
     #[generate_trait]
     impl Internal of InternalTrait {
-        // Transitions that move value must originate from the pool's
-        // privacy_invoke, so the funding note is proven and the raw wallet is
-        // never the caller the registry records.
+        // Pool-routed transitions must originate from privacy_invoke, so the
+        // registry records this helper rather than the raw wallet as caller.
         fn assert_pool(self: @ContractState) {
             assert(get_caller_address() == self.pool.read(), Errors::NOT_POOL);
         }
@@ -143,7 +140,7 @@ pub mod ClaimAnonymizer {
         ) -> Span<OpenNoteDeposit> {
             self.assert_pool();
             match operation {
-                // Claim binds shielded funding -> must arrive via privacy_invoke.
+                // Claim is pool-routed and must arrive via privacy_invoke.
                 ClaimOperation::Claim => { self.reg().claim(slot_key, claim_commitment); },
                 // Settlement consumes the private claim -> also via privacy_invoke.
                 ClaimOperation::Settle => { self.reg().settle(slot_key, nullifier); },
@@ -152,7 +149,7 @@ pub mod ClaimAnonymizer {
                         .finance(auth, amount_commitment);
                 },
                 ClaimOperation::SettleAndRepay => {
-                    // repay the venue first, then consume the right - both or neither.
+                    // Clear the adapter position first, then consume the right - both or neither.
                     IExecutionAdapterDispatcher { contract_address: adapter }.settle(auth);
                     self.reg().settle(slot_key, nullifier);
                 },

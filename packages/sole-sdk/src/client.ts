@@ -216,12 +216,12 @@ export interface SoleAddresses {
   registry: string;
   anonymizer: string;
   pool: string; // STRK20 privacy pool
-  adapter: string; // ExecutionAdapter (Vesu or FallbackMarket)
+  adapter: string; // configured ExecutionAdapter
 }
 
-// What a given viewer is permitted to learn. The registry only ever holds the
-// PUBLIC projection; the richer projections are reconstructed by a party that
-// holds the relevant secret or a scoped viewing key (docs/PRIVACY_BOUNDARY.md).
+// Convenience data shapes for local callers. The registry holds only the
+// public fields; this SDK does not implement a scoped-disclosure protocol or
+// auditor-key access control (docs/PRIVACY_BOUNDARY.md).
 export interface PublicView { slotKey: Felt; state: RightState }
 export interface ClaimantView extends PublicView { claimCommitment: Felt; claimedAt?: number }
 export interface CounterpartyView { slotKey: Felt; satisfied: boolean }
@@ -270,11 +270,9 @@ export class SoleClient {
   private provider: RpcProvider;
   private addrs: SoleAddresses;
   private registryAbi: any;
-  // Cached result of the pool's get_fee_amount() - fetched live, never
-  // hardcoded (SKILL.md warns the flat fee has already changed since it was
-  // first documented: 4 STRK when written, 6 STRK as verified on mainnet
-  // here). It is used only for the user-selected Ready compatibility deposit,
-  // not for the default standalone invoke path.
+  // Cached result of the pool's get_fee_amount(), fetched live and never
+  // hardcoded. It is used only for the user-selected Ready compatibility
+  // deposit, not for the default standalone invoke path.
   private feeAmount: bigint | null = null;
 
   constructor(provider: RpcProvider, addrs: SoleAddresses, registryAbi: any) {
@@ -351,8 +349,7 @@ export class SoleClient {
     };
   }
 
-  /** Availability check without revealing who holds it. The core question Sole
-   *  answers: "can I safely claim this?" - not "who has this?" */
+  /** Availability check without a holder field in the registry response. */
   async isClaimable(reference: string): Promise<boolean> {
     return (await this.publicView(reference)).state === RightState.Unclaimed;
   }
@@ -367,8 +364,8 @@ export class SoleClient {
     return this.anonymizerCall(account, "register", [slotKey]);
   }
 
-  /** Acquire the exclusive claim, binding shielded funding. The claimantSecret
-   *  and fundingNote stay client-side; only the commitment reaches chain. */
+  /** Acquire the exclusive claim. Local preimages derive an opaque commitment;
+   *  the registry receives the commitment, not its preimage. */
   async claim(
     account: SoleAccount, reference: string, claimantSecret: Felt, fundingNote: Felt,
     options: PrivacyInvokeOptions = {},
@@ -402,8 +399,9 @@ export class SoleClient {
     return this.privacyInvoke(account, ClaimOperation.Settle, { slotKey, nullifier }, this.addrs.registry, undefined, options);
   }
 
-  /** Authorize + execute one financing action against the venue. Only runs
-   *  because A holds an ACTIVE right; the adapter re-checks Sole's state. */
+  /** Record one adapter position action. It runs only while the right is
+   *  ACTIVE; the adapter re-checks Sole's state. The deployed fallback adapter
+   *  records an opaque commitment and does not transfer assets. */
   async finance(
     account: SoleAccount, reference: string, claimCommitment: Felt, amountCommitment: Felt,
     options: PrivacyInvokeOptions = {},
@@ -415,7 +413,7 @@ export class SoleClient {
       this.addrs.adapter, undefined, options);
   }
 
-  /** Settle: repay the venue position and consume the right, atomically. */
+  /** Clear the adapter position and consume the right, atomically. */
   async settleAndRepay(
     account: SoleAccount, reference: string, claimantSecret: Felt, claimCommitment: Felt,
     options: PrivacyInvokeOptions = {},
@@ -428,16 +426,15 @@ export class SoleClient {
       this.addrs.adapter, undefined, options);
   }
 
-  // ----- scoped disclosure projections -----
+  // ----- local projection helper -----
   counterpartyView(v: PublicView): CounterpartyView {
     return { slotKey: v.slotKey, satisfied: v.state === RightState.Consumed };
   }
 
   /**
    * Route a state transition through the STRK20 pool's privacy_invoke, which
-   * dispatches into ClaimAnonymizer::privacy_invoke - one entry point, the
-   * same calling convention as every STRK20 anonymizer helper (Swap, Vesu,
-   * Escrow). Builds the full flat positional calldata the Cairo side expects
+   * dispatches into ClaimAnonymizer::privacy_invoke. Builds the full flat
+   * positional calldata the Cairo side expects
    * (operation, slot_key, claim_commitment, nullifier, adapter, auth.slot_key,
    * auth.nonce, amount_commitment), zero-filling whatever this operation
    * doesn't use. Sole's privacy_invoke returns an empty Span<OpenNoteDeposit>
@@ -455,9 +452,11 @@ export class SoleClient {
    * Before each action, Sole asks Ready for a no-gas, non-submittable
    * preparation. This validates the exact action shape and lets the dapp stop
    * safely on a code 114/119 response before opening a paid wallet request.
-   * The wallet proves a shielded funding note in ZK before dispatching, so
-   * the anonymizer - not the raw wallet - is the caller the registry records
-   * (docs/INTEGRATING.md, strk20-wallet-api/private-defi).
+   * The pool invokes the configured anonymizer after its private-action proof,
+   * so the anonymizer - not the raw wallet - is the caller the registry
+   * records. This does not establish transaction-level wallet unlinkability:
+   * bundled pool deposits can be publicly correlated with the same slot
+   * (docs/PRIVACY_BOUNDARY.md).
    *
    * strk20InvokeTransaction resolving is NOT proof the invoke ran: observed
    * live on mainnet, a combined deposit+invoke can confirm with no revert

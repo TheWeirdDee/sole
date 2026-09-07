@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Sole - ExecutionAdapter
-// The venue layer. Sole is the protagonist: a financing action against a real
-// money market is CAUSALLY DOWNSTREAM of Sole's authorization. The adapter can
-// only be driven by an authorization token that Sole mints when a right goes
-// ACTIVE, and that token is single-use, bound to the slot, and consumed at
-// settlement. Bank B's duplicate claim reverts at Sole's exclusivity check, so
-// no authorization is ever minted and the venue never executes.
+// The adapter gate. An adapter action is causally downstream of Sole's
+// authorization: it can run only with an authorization derived from an ACTIVE
+// right, bound to the slot, and invalid once that right is consumed. A duplicate
+// claim produces no valid authorization, so the adapter cannot record a second
+// position for that claim.
 //
 //   canonical right
 //        │  claim (private, via anonymizer)
@@ -17,16 +16,14 @@
 //        │                         ExecutionAdapter.finance(auth, ...)
 //        │                                   │  [assert auth valid & unused]
 //        │                                   ▼
-//        │                            money market executes
+//        │                            adapter records a position
 //        ▼                                   │
 //   settle(nullifier) ◀──── consumes auth ───┘  → right CONSUMED
 //
-// Two implementations behind ONE interface (DECISIONS D-009):
-//   VesuAdapter        - the real Starknet money market (STRK20-integrating).
-//   FallbackMarket     - a minimal in-repo lending vault, so the full mainnet
-//                        loop ships even if the external venue integration
-//                        fights us. The Sole authorization path is identical;
-//                        only the target behind the adapter changes.
+// Two implementations behind one interface:
+//   VesuAdapter        - an unshipped external-market integration skeleton.
+//   FallbackMarket     - the deployed in-repo gate; it records an opaque
+//                        position commitment and does not transfer assets.
 
 use starknet::ContractAddress;
 
@@ -40,15 +37,15 @@ pub struct ExecAuth {
 
 #[starknet::interface]
 pub trait IExecutionAdapter<TContractState> {
-    /// Execute one financing action against the venue. MUST verify with the
-    /// RightsRegistry that `auth` corresponds to an ACTIVE right and has not
-    /// been consumed. Reverts otherwise. Returns an opaque venue receipt id.
+    /// Record one adapter action. MUST verify with the RightsRegistry that
+    /// `auth` corresponds to an ACTIVE right and has not been consumed. Reverts
+    /// otherwise. Returns an opaque position id.
     fn finance(
         ref self: TContractState, auth: ExecAuth, shielded_amount_commitment: felt252,
     ) -> felt252;
 
-    /// Settle/repay the financing and release the venue position. Called on the
-    /// Sole settlement path; consuming the right consumes the auth.
+    /// Clear the adapter position. Called on the Sole consumption path;
+    /// consuming the right invalidates the auth.
     fn settle(ref self: TContractState, auth: ExecAuth) -> felt252;
 
     fn registry(self: @TContractState) -> ContractAddress;
@@ -67,8 +64,9 @@ pub mod ExecTags {
 }
 
 // ---------------------------------------------------------------------------
-// Fallback market: guaranteed-shippable in-repo lending vault. Real shielded
-// value moves; the loop completes on mainnet without an external dependency.
+// Fallback adapter: in-repo position bookkeeping. It records and clears an
+// opaque commitment only; it does not lend, repay, transfer tokens, or call an
+// external market.
 // ---------------------------------------------------------------------------
 #[starknet::contract]
 pub mod FallbackMarket {
@@ -114,9 +112,9 @@ pub mod FallbackMarket {
 
     #[generate_trait]
     impl Internal of InternalTrait {
-        // The whole point: the venue call is gated by Sole. If the right is not
-        // ACTIVE (never claimed, or a duplicate that reverted, or consumed),
-        // there is no authorization and financing cannot execute.
+            // The adapter call is gated by Sole. If the right is not ACTIVE
+            // (never claimed, duplicate, or consumed), no position can be
+            // recorded.
         //
         // auth.nonce is NOT trusted as caller-supplied: it is recomputed here
         // from the registry's own on-chain commitment for this slot and must
@@ -146,9 +144,8 @@ pub mod FallbackMarket {
             // to finance the same right a second time.
             assert(!self.financed.read(auth.slot_key), Errors::ALREADY_FINANCED);
             self.financed.write(auth.slot_key, true);
-            // real shielded value settles here via the STRK20 private-transfer
-            // path (wired in the SDK/privacy_invoke leg); we record the opaque
-            // position commitment. The amount never becomes public.
+            // This implementation records the opaque position commitment only.
+            // It deliberately performs no asset transfer or external call.
             self.position.write(auth.slot_key, shielded_amount_commitment);
             self.emit(Event::Financed(Financed { slot_key: auth.slot_key }));
             shielded_amount_commitment
@@ -161,20 +158,17 @@ pub mod FallbackMarket {
             pos
         }
         fn registry(self: @ContractState) -> ContractAddress { self.registry.read() }
-        // FallbackMarket has no separate venue contract - it IS the venue
-        // (a self-contained in-repo vault), so this returns its own address,
-        // not the registry's.
+        // FallbackMarket is its own adapter endpoint, so source deployments
+        // return this contract address. Each deployment must be read back and
+        // verified before it is described as an independent venue.
         fn venue(self: @ContractState) -> ContractAddress { get_contract_address() }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Vesu adapter: same gate, real external venue. finance()/settle() forward the
-// shielded position into Vesu's lending market after the identical Sole
-// authorization check. Wiring to Vesu's entrypoints is completed against the
-// STRK20 skills + Vesu interfaces (see docs/INTEGRATING.md and AGENT_HANDOFF).
-// If Vesu integration is not landed by the deadline, deploy FallbackMarket
-// instead - the Sole authorization path and the demo are unchanged.
+// External-market adapter skeleton. It has the same gate, but its market calls
+// are intentionally unimplemented below. It must not be represented as a live
+// integration until those calls are implemented, deployed, and reverified.
 // ---------------------------------------------------------------------------
 #[starknet::contract]
 pub mod VesuAdapter {
