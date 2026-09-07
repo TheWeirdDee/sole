@@ -4,6 +4,8 @@ import Link from "next/link";
 import { ArrowRight, Lock, ChevronRight } from "lucide-react";
 import { motion, Variants } from "framer-motion";
 import { GrainOverlay } from "../components/GrainOverlay";
+import { ScrambleText } from "../components/ScrambleText";
+import { FaqSection } from "../components/FaqSection";
 
 const wrap: React.CSSProperties = { maxWidth: 1040, margin: "0 auto", padding: "0 26px" };
 
@@ -88,9 +90,9 @@ export default function Home() {
               color: "var(--ink)",
             }}
           >
-            One right. One gated execution.
+            One right. One gated adapter action.
             <br />
-            Enforced by a public state machine.
+            Enforced by <ScrambleText text="public state." />
           </motion.h1>
 
           {/* Subtitle */}
@@ -418,6 +420,9 @@ wallet -> pool -> anonymizer -> claim() -> `}
           </p>
         </div>
       </motion.section>
+
+      {/* FREQUENTLY ASKED QUESTIONS SECTION */}
+      <FaqSection />
     </main>
   );
 }
