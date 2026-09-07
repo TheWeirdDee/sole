@@ -4,8 +4,9 @@
 // How another application integrates Sole WITHOUT cloning this repo. A private
 // rights app constructs a SoleClient with the deployed registry/anonymizer/pool
 // addresses and drives the lifecycle. All privacy-bearing calls route through
-// the STRK20 pool's privacy_invoke so the caller wallet never links to the
-// claim (see docs/INTEGRATING.md for the exact wiring).
+// the STRK20 pool's privacy_invoke, so the registry sees the configured helper
+// as caller. That caller boundary is not transaction-level wallet
+// unlinkability; see docs/PRIVACY_BOUNDARY.md.
 
 import { Contract, hash, RpcProvider, type AccountInterface, type WalletAccountV6 } from "starknet";
 import {
