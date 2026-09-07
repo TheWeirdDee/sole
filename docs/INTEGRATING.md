@@ -41,20 +41,54 @@ await sole.settleAndRepay(account, ref, claimantSecret, claimCommitment); // -> 
 ```
 
 ## The privacy_invoke seam
-`SoleClient.privacyInvoke` calls `account.strk20InvokeTransaction([{ type:
-"deposit", token: STRK, amount: <flat fee> }, { type: "invoke", contract:
-anonymizer, calldata }])` — the same call every STRK20 anonymizer helper
-uses. The wallet proves a shielded funding note and dispatches into
+By default, `SoleClient.privacyInvoke` calls the wallet with only Sole's
+protocol-valid action:
+
+```ts
+await account.strk20InvokeTransaction([
+  { type: "invoke", contract: ANONYMIZER_ADDR, calldata },
+]);
+```
+
+The wallet builds the private proof and its own fee action. The user therefore
+needs enough shielded STRK for that fee; Sole does not silently top it up from
+the user's public balance. The helper dispatches into
 `ClaimAnonymizer::privacy_invoke`, so the registry records the anonymizer as
-caller, never the wallet. The `deposit` action is required alongside the
-invoke: every documented anonymizer helper pairs `invoke` with a real
-value-moving action, and a bare invoke-only actions array is rejected by the
-wallet as `INVALID_REQUEST_PAYLOAD` before it reaches proving. Sole itself
-moves no value through the pool - `privacy_invoke` always returns an empty
-`Span<OpenNoteDeposit>` here - so the deposit just moves the flat per-action
-fee from the caller's own public balance into their own private balance,
-rolled back atomically if the invoke reverts. Do NOT call the registry
+caller, never the wallet. Sole's helper returns an empty
+`Span<OpenNoteDeposit>` for these operations. Do **not** call the registry
 directly: it reverts `CALLER_NOT_ANONYMIZER`, by design.
+
+### Older Ready compatibility mode
+
+Ready can reject the standalone action with the generic
+`INVALID_REQUEST_PAYLOAD` / code 114 during no-gas preparation. That is a
+wallet result, not a transaction result: nothing was signed, relayed, or
+sent. It does not say why Ready rejected the payload, does not establish that
+a deposit is required, and does not predict whether a legacy action shape
+will succeed. Catch the SDK's `ReadyStandaloneInvokeRejectedError`, tell the
+user this fact, and offer a separate confirmation only if they want to try a
+legacy shape. Do **not** automatically retry with a deposit.
+
+Only after an explicit user choice may a caller pass
+`{ useCompanionDeposit: true }` to the private operation:
+
+```ts
+await sole.claim(
+  account, ref, claimantSecret, fundingNote,
+  { useCompanionDeposit: true }, // user-reviewed Ready workaround
+);
+```
+
+That optional legacy mode builds the older `[deposit, invoke]` shape. Its
+companion deposit is twice the current live flat fee, not a hard-coded amount
+(for example, 12 STRK when the live fee is 6 STRK). It may appear as a gross
+public shield in Ready; it is not an automatic or protocol-required extra gas
+charge. The wallet controls the exact fee and shielded-balance accounting, so
+show the wallet's quoted amount to the user before submission. A code 119
+insufficient-private-balance result is also no-submission: ask the user to
+shield funds deliberately instead of creating a hidden top-up flow. The
+legacy shape may not resolve a code-114 rejection; never turn repeated
+compatibility attempts into an automatic paid loop.
 
 ## What you get
 - `isClaimable(ref)` — availability without learning the holder.
