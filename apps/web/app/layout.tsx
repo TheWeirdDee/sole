@@ -2,7 +2,6 @@ import "./globals.css";
 import type { Metadata } from "next";
 import { Nav } from "../components/Nav";
 import { SmoothScroll } from "../components/SmoothScroll";
-import { GrainOverlay } from "../components/GrainOverlay";
 
 export const metadata: Metadata = {
   title: "Sole — private exclusivity for economic rights",
@@ -21,7 +20,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body suppressHydrationWarning>
-        <GrainOverlay />
         <SmoothScroll>
           <Nav />
           {children}
